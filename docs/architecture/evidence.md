@@ -40,6 +40,8 @@ could not accommodate evidence errors or trust-boundary errors, so we **split it
 | `EVIDENCE_REPRODUCED` | verify only | — | 0 | — |
 | `EVIDENCE_STALE` | verify only | — | **2** | — |
 
+`INVALID_RUN` does **not** appear in this table: it is a **run-level internal state**, not a mode verdict. Its mapping is defined in §3.4.1 / §3.2 — it invalidates the whole pair, the pair is retried up to `policy.experiment.max_pair_retries`, and if valid pairs stay below `minimum_valid_pairs` it surfaces here as `INFRASTRUCTURE_ERROR` (exit 2).
+
 **Rule**: evidence, infrastructure, trust-boundary, and not-comparable errors are **exit 2 in every mode**.
 Only friction findings are advisory (0) under `measure` and block (1) under `gate`.
 `--strict` promotes `DEGRADED_DATA` to 1.
@@ -62,6 +64,22 @@ The display order of `primary_reason` is defined independently of how the verdic
 | Passes all evidence validation | `EVIDENCE_INVALID` / `EVIDENCE_INCOMPLETE` |
 | policy / pack originate from the evaluator path | `GATE_PRECONDITION_UNMET` |
 
+### 4.5 Normative evaluation order
+
+The verdict is decided by evaluating these in order; the first that matches wins. The order is fixed so that `ADAPTATION_REGRESSION` and `INCONCLUSIVE` can never both apply ambiguously (a candidate that failed every pair would otherwise satisfy both).
+
+```
+1. infrastructure / evidence / trust-boundary errors
+2. baseline not established         -> INCONCLUSIVE
+3. candidate failed every pair      -> ADAPTATION_REGRESSION   (evaluated BEFORE the FFR-pair check)
+4. too few successful pairs for FFR -> INCONCLUSIVE
+5. FFR and per-component checks
+```
+
+### 4.6 `gate` recomputes; it does not trust the report
+
+`gate` never scores itself from a recorded verdict. Every invocation **re-runs evidence validation (§5) and recomputes the metrics and the verdict directly from the cassette**. The recorded `morrow-report.*` is **not an input to the decision**; `gate` regenerates the canonical report from its own recomputation. Checking a recorded report against the recomputation is the job of `verify` (§5.2). This structurally prevents a recorded artifact from ever influencing the verdict.
+
 ---
 
 ## 5. Evidence validation (scope it to the run)
@@ -77,26 +95,44 @@ across K repetitions there are K instances of `seq=0` and K instances of `SESSIO
 | `seq` starts at 0, no gaps, no duplicates | run | `EVIDENCE_INVALID` |
 | `tool_use_id` is unique | run | `EVIDENCE_INVALID` |
 | Orphaned `tool_result` (no matching `tool_use`) | run | `EVIDENCE_INVALID` |
-| Exactly one `SESSION_START` and exactly one `COMPLETION` | run | `EVIDENCE_INCOMPLETE` |
+| Exactly one `SESSION_START` per run; exactly one `COMPLETION` **only for runs whose `terminal_status == "completed"`** (§5.1) | run | `EVIDENCE_INCOMPLETE` |
 | `session_id` matches the value for that run in the manifest | run | `EVIDENCE_INVALID` |
 | Unpaired `tool_use` (`success is None`) at or below the cap | run | `EVIDENCE_INCOMPLETE` |
 | The manifest's `runs[]` exactly matches the actual file set (no more, no less) | experiment | `EVIDENCE_INCOMPLETE` |
-| Each pair has exactly one baseline and one candidate | experiment | `EVIDENCE_INVALID` |
+| Each `(pair_id, variant, attempt_index)` is unique; each pair has exactly one **adopted** baseline and one **adopted** candidate | experiment | `EVIDENCE_INVALID` |
 
 ### 5.1 The manifest's `runs[]` (closed array)
 
 ```json
 "runs": [
   {"run_id": "r0", "run_index": 0, "variant": "baseline",  "pair_id": 0, "order_position": 0,
+   "attempt_index": 0, "adopted": true, "terminal_status": "completed",
    "session_id": "…", "status": "ok",
    "files": {"events": "r0.events.jsonl", "churn": "r0.churn.json", "tests": "r0.tests.json"}},
-  {"run_id": "r1", "run_index": 0, "variant": "candidate", "pair_id": 0, "order_position": 1, …}
+  {"run_id": "r1", "run_index": 0, "variant": "candidate", "pair_id": 0, "order_position": 1,
+   "attempt_index": 0, "adopted": true, "terminal_status": "timeout", …}
 ]
 ```
+
+`attempt_index` is 0-based; a retry appends a new run entry rather than overwriting, so **every attempt is retained**. Exactly one attempt per `(pair_id, variant)` carries `adopted: true` — the attempt whose metrics feed the gate. `terminal_status` ∈ {`completed`, `timeout`, `budget_exceeded`, `crashed`} is set by the evaluator, not the provider; only a `completed` run is required to carry a `COMPLETION` event (§5).
 
 If any file in the cassette directory is not listed under `files`, the result is `EVIDENCE_INCOMPLETE`.
 Each path must be a regular file directly under the cassette root after `resolve()`,
 must not be a symlink, and must not collide with another after normalization.
+
+### 5.2 The `verify` procedure
+
+`verify` reproduces the decision from the cassette in a fixed order:
+
+```
+1. verify the digests listed in the manifest
+2. validate the schemas (§5)
+3. recompute the metrics from the evidence
+4. recompute the verdict
+5. regenerate the canonical report and compare it byte-for-byte with the recorded one
+```
+
+`CASSETTE_CORRUPTED` fires on a step-1 mismatch (a listed digest does not match). `EVIDENCE_STALE` fires on a step-5 mismatch (the regenerated report differs from the recorded one). A step-2 failure surfaces as the `EVIDENCE_INVALID` / `EVIDENCE_INCOMPLETE` states defined in §5.
 
 ---
 
@@ -178,7 +214,9 @@ Time information is held only per run in the manifest (start and end). Order is 
 Parsing shell strings is not viable at P0 quality. **Fix the entry point to a single path.**
 
 ```
-The evaluator places ./morrow-test in the worktree:
+The evaluator places ./morrow-test in the worktree immediately after it is created,
+before the pre snapshot (§3.4), as a fixed-bytes launcher whose digest is verified
+identical at the pre and the post snapshot:
     it runs the acceptance argv of the future-pack and
     appends {launcher_seq, exit_code, duration_ms} to
     <state_root>/launcher-log/<run_id>.jsonl
@@ -190,10 +228,18 @@ test_cycles = number of lines in the launcher log   <- a primary record, not inf
 
 If the agent bypasses `./morrow-test` and invokes tests directly:
 
-* When a `CommandEvent` with `executable` of `PYTEST` / `PYTHON` is detected,
-  **increment `data_quality.direct_test_invocations`**
-* If this count exceeds `policy.metrics.max_direct_test_invocations` (default 0),
-  the result is **`EVIDENCE_INCOMPLETE` -> exit 2**. Do not silently undercount
+* The **raw command string is parsed inside the trust boundary, before publishing**,
+  and projected onto a `CommandPurpose` enum (`test_launcher` / `direct_test` / `other`).
+  Only the enum is published; the raw string never leaves the evaluator
+* A command is `direct_test` when it matches a known test-invocation form:
+  `pytest`, `python -m pytest`, `python3 -m pytest`, `uv run pytest`.
+  (`executable == PYTHON` alone is **not** sufficient — a plain script would be a false
+  positive, and `uv run pytest` would be missed)
+* Each `direct_test` **increments `data_quality.direct_test_invocations`**; if the count
+  exceeds `policy.metrics.max_direct_test_invocations` (default 0), the result is
+  **`EVIDENCE_INCOMPLETE` -> exit 2**. Do not silently undercount
+* A command that cannot be classified fails **closed**: it is treated as
+  `EVIDENCE_INCOMPLETE`, never as `other`
 
 General-purpose parsing of shell grammar is P1.
 
