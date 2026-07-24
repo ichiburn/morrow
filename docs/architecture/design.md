@@ -1,107 +1,107 @@
-# MORROW 実装設計 v4 — 実装基準線
+# MORROW Implementation Design v4 — Implementation Baseline
 
-* **改訂日**: 2026-07-25 06:00 JST
-* **経緯**: v1 スペック → v2.0 → R1(15) → v2.1 → R2-a(19) / R2-b(16) → v3 → **R3(16)** → 本書
-* **残り時間**: 内部提出期限 2026-07-26 09:00 JST まで **約 27 時間**（単独）
+* **Revised**: 2026-07-25 06:00 JST
+* **History**: v1 spec → v2.0 → R1(15) → v2.1 → R2-a(19) / R2-b(16) → v3 → **R3(16)** → this document
+* **Time remaining**: ~27 hours until the internal submission deadline of 2026-07-26 09:00 JST (solo)
 
 ---
 
-## 0. v4 で何を変えたか
+## 0. What changed in v4
 
-R3 の 16 件の MUST_FIX は 2 つのグループに分かれた。
+The 16 MUST_FIX items from R3 fell into two groups.
 
-**グループ A: 仕様のバグ**（直せば済む）— 全件修正した。
-**グループ B: どう実装しても支えられない主張** — **主張を取り下げた。**
+**Group A: spec bugs** (fixable) — all fixed.
+**Group B: claims no implementation can support** — **the claim was withdrawn.**
 
-| グループ B の主張 | なぜ支えられないか | v4 の扱い |
+| Group B claim | Why it can't be supported | v4 treatment |
 |---|---|---|
-| 「差をノイズと区別できる」 | K=3 の符号検定では**片側 p の下限が 1/8 = 0.125**。K=4 でも 1/16 = 0.0625 | **統計的有意性を主張しない**。「事前登録した規則の下で、同時取得したヌルを上回った」という観測を提示する |
-| 「閾値はヌルから導出するので恣意的でない」 | `floor=1.30` / `safety_factor=1.30` / `maximum_ffr=1.20` 自体が無根拠。ヌルを `FFR_null×1.30` で判定すれば自動的に通る（**循環**） | **「導出」をやめる**。閾値は treatment データを見る前に登録した**決定規則**であり、ヌルは同じ画面に並べて読者に判断材料を渡す |
-| 「evaluator ドメインに agent は到達できない」 | 同一 UID・同一 `experiment_root` 配下。§7.2 の「親ディレクトリに到達できる」と正面から矛盾 | **権限境界であるという主張を撤回**。資材を worktree の外に置くのは**事故防止**であり、敵対的エージェントには効かないと明記 |
-| 「事前登録を第三者が検証できる」 | tag の日時は指定でき、tag は移動・削除できる | **「事前登録」の語を使わない**。「公開済み評価資材スナップショット」と呼び、限界を明記 |
-| 「公開物に自由文字列を一切書かない」 | `executable` / `raw_kind` / `counters` のキー / 各種 ID はすべて自由文字列 | **discriminated union + enum + opaque ID** で本当に閉じる（§6） |
+| "The difference is distinguishable from noise" | A sign test at K=3 has a **one-sided p floor of 1/8 = 0.125**; even K=4 gives 1/16 = 0.0625 | **Claim no statistical significance.** Present the observation that, under a pre-registered rule, the result exceeded a null control collected concurrently |
+| "The threshold isn't arbitrary because it's derived from the null" | `floor=1.30` / `safety_factor=1.30` / `maximum_ffr=1.20` are themselves ungrounded. Judging the null by `FFR_null×1.30` passes it automatically (**circular**) | **Drop the "derivation."** The threshold is a decision rule registered before the treatment data is seen; the null sits alongside it on the same screen, leaving the reader to judge |
+| "The agent cannot reach the evaluator domain" | Same UID, under the same `experiment_root`. Directly contradicts §7.2's "can reach the parent directory" | **Withdraw the trust-boundary claim.** Keeping assets outside the worktree is accident prevention; it does not stop an adversarial agent, and this is stated plainly |
+| "A third party can verify the pre-registration" | A tag's timestamp can be set, and tags can be moved or deleted | **Do not use the term "pre-registration."** Call it a "published snapshot of evaluation assets" and state the limitation |
+| "The published output contains no free-form strings at all" | `executable` / `raw_kind` / `counters` keys / the various IDs are all free-form strings | **Close it for real** with a discriminated union + enum + opaque ID (§6) |
 
-**v4 の設計原則**: 主張の強度を、支えられる証拠の強度に一致させる。
+**v4 design principle**: match the strength of a claim to the strength of the evidence that supports it.
 
 ---
 
-## 0.1 主張とその根拠（強度つき）
+## 0.1 Claims and their basis (with strength)
 
-| # | 主張 | 根拠 | 強度 |
+| # | Claim | Basis | Strength |
 |---|---|---|---|
-| C1 | 同一の未来タスクを 2 つのリポジトリ状態に同一条件で実行し、作業量の差を再現可能に抽出できる | 実装 + 記録 + `verify` による再導出 | **強い**（機械的に検証可能） |
-| C2 | この構成では、結合を導入した候補のほうが、より多くのファイル読取・試行・変更行を要した | 実測値と全 pair の生データ提示 | **中**（この環境・このタスク・このモデルでの観測） |
-| C3 | 観測された差は、同時取得したヌルコントロールの範囲を上回った | ヌルと treatment を同一手続きで取得 | **中**（有意性ではなく比較） |
-| C4 | 判定は決定論的で、証拠から再現できる | `verify` が CI で毎回走る | **強い** |
-| C5 | 未信頼リポジトリでも安全に実行できる | — | **主張しない** |
-| C6 | 統計的に有意な差である | — | **主張しない**（K=4 では原理的に不可能） |
-| C7 | 証拠は改竄に耐える | — | **主張しない**（署名なし。ハッシュは破損検知） |
-| C8 | 指標は敵対的なエージェントに対して頑健である | — | **主張しない** |
+| C1 | The same future task can be run against two repository states under identical conditions and the difference in work extracted reproducibly | Implementation + recording + re-derivation via `verify` | **Strong** (mechanically verifiable) |
+| C2 | In this setup, the candidate that introduced coupling required more file reads, attempts, and changed lines | Observed values plus the raw data for every pair | **Medium** (an observation for this environment, this task, this model) |
+| C3 | The observed difference exceeded the range of a null control collected concurrently | Null and treatment collected by the same procedure | **Medium** (a comparison, not significance) |
+| C4 | The decision is deterministic and reproducible from the evidence | `verify` runs on every CI run | **Strong** |
+| C5 | Untrusted repositories can be run safely | — | **Not claimed** |
+| C6 | The difference is statistically significant | — | **Not claimed** (impossible in principle at K=4) |
+| C7 | The evidence resists tampering | — | **Not claimed** (no signatures; hashes detect corruption) |
+| C8 | The metric is robust against an adversarial agent | — | **Not claimed** |
 
-README・提出文・デモ動画は、**この表をそのまま載せる**。
+The README, submission text, and demo video **reproduce this table verbatim.**
 
 ---
 
-## 1. 実測で判明した制約（検証済み）
+## 1. Constraints found by measurement (verified)
 
-### 1.1 環境
+### 1.1 Environment
 
-| 項目 | 実測値 | 影響 |
+| Item | Measured value | Impact |
 |---|---|---|
 | Python / uv / mise | 3.12.13 / 0.7.19 / 2026.7.7 | OK |
-| Docker | Server 29.5.3 / 6 CPU / 15.62 GiB | **サンドボックスから socket 不可** → G1 は人間が host で実行 |
-| `foundryctl` | 未インストール | G1 の最優先事項 |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | **ともに未設定** | 実エージェント実行は**ローカルのみ**。CI では不可能 |
+| Docker | Server 29.5.3 / 6 CPU / 15.62 GiB | **No socket access from the sandbox** → G1 is run by a human on the host |
+| `foundryctl` | Not installed | Top priority for G1 |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | **Both unset** | Real agent runs are **local only**; impossible in CI |
 
-### 1.2 Claude Code `stream-json` の実形状（採取した 76 行の全内訳）
+### 1.2 Actual shape of Claude Code `stream-json` (full breakdown of the 76 lines collected)
 
-`jq` で再検算し、合計が一致することを確認した。
+Recomputed with `jq`, confirming the total matches.
 
-| 件数 | `type` / `subtype` | 正規化 |
+| Count | `type` / `subtype` | Normalization |
 |---:|---|---|
 | 30 | `system` / `thinking_tokens` | `OPAQUE` |
-| 22 | `assistant` | `content[].tool_use` ごとに分解 |
-| 10 | `user` | `content[].tool_result` を `tool_use_id` で対応付け |
-| 4 | `system` / `commands_changed` | `OPAQUE`（隔離後は出現しない） |
-| 3 | `system` / `hook_started` | `OPAQUE`（隔離後は出現しない） |
-| 3 | `system` / `hook_response` | `OPAQUE`（隔離後は出現しない） |
+| 22 | `assistant` | Split per `content[].tool_use` |
+| 10 | `user` | `content[].tool_result` matched by `tool_use_id` |
+| 4 | `system` / `commands_changed` | `OPAQUE` (does not appear after isolation) |
+| 3 | `system` / `hook_started` | `OPAQUE` (does not appear after isolation) |
+| 3 | `system` / `hook_response` | `OPAQUE` (does not appear after isolation) |
 | 1 | `system` / `notification` | `OPAQUE` |
 | 1 | `system` / `init` | `SESSION_START` |
 | 1 | `result` / `success` | `COMPLETION` |
 | 1 | `rate_limit_event` | `OPAQUE` |
 | **76** | | |
 
-この 76 行を fixture として取り込み、`raw_kind` 別件数の一致と未分類 0 件を契約テストで固定する。
+These 76 lines are ingested as a fixture; a contract test pins the per-`raw_kind` counts and zero unclassified lines.
 
-### 1.3 `--max-turns` は存在しない
+### 1.3 `--max-turns` does not exist
 
-`claude --help` に無い。`num_turns` は終端 `result` にしか出ないため実行中の上限強制に使えない。
-`--bare` は `ANTHROPIC_API_KEY` 必須のため使えない（実測: `terminal_reason: api_error`）。
-→ 強制するのは**壁時計時間と予算のみ**。ステップ数は観測して記録するが上限強制しない（§7.1）。
+It is not in `claude --help`. `num_turns` appears only in the terminal `result`, so it cannot enforce a cap during a run.
+`--bare` requires `ANTHROPIC_API_KEY` and is therefore unusable (observed: `terminal_reason: api_error`).
+→ Only wall-clock time and budget are enforced. Step count is observed and recorded but not capped (§7.1).
 
-### 1.4 入れ子実行はホスト環境を継承して壊れる → 隔離で解決（実証済み）
+### 1.4 Nested execution inherits the host environment and breaks → solved by isolation (demonstrated)
 
-| | 隔離前 | 隔離後 |
+| | Before isolation | After isolation |
 |---|---|---|
-| `permission_denials` | Bash が全滅 | **0** |
-| hook 由来イベント | 混入 | **なし** |
-| 結果 | "test execution is blocked" | `is_error=false, num_turns=9, cost=$0.159` |
+| `permission_denials` | Bash entirely blocked | **0** |
+| hook-derived events | mixed in | **none** |
+| result | "test execution is blocked" | `is_error=false, num_turns=9, cost=$0.159` |
 
-**副産物（重要）**: エージェントは `pytest` 不在 → 失敗 → **`pip install`** → 再実行を踏んだ。
-→ **エージェントは実行環境を書き換えられる**。これが §3.5 の venv 設計の直接の根拠。
-
----
+**Byproduct (important)**: the agent hit a missing `pytest` → failure → **`pip install`** → re-run.
+→ **The agent can rewrite its execution environment.** This is the direct basis for the venv design in §3.5.
 
 ---
 
-## 文書の構成
+---
 
-設計は関心ごとに分割してある。
+## Document structure
 
-| 文書 | 内容 |
+The design is split by concern.
+
+| Document | Contents |
 |---|---|
-| **design.md**（本書） | 何を変えたか / 主張とその根拠 / 実測で判明した制約 |
-| [measurement.md](measurement.md) | 信頼境界、対反復、成分、churn、成功判定、ヌルコントロール、数値の整合 |
-| [evidence.md](evidence.md) | 判定の状態機械と終了コード、証拠の検証、正規化イベントモデル |
-| [operations.md](operations.md) | 実行と隔離、スコープ、デモ設計、層の強制、SigNoz、公開スナップショット、テスト戦略、クリティカルパス、公式要件、リスク |
-| [review-log.md](review-log.md) | 実装前に通した敵対的レビュー 3 ラウンドの記録 |
+| **design.md** (this document) | What changed / claims and their basis / constraints found by measurement |
+| [measurement.md](measurement.md) | Trust boundary, paired runs, components, churn, success criteria, null control, numeric consistency |
+| [evidence.md](evidence.md) | The decision state machine and exit codes, evidence verification, the normalized event model |
+| [operations.md](operations.md) | Execution and isolation, scope, demo design, layer enforcement, SigNoz, published snapshot, test strategy, critical path, official requirements, risks |
+| [review-log.md](review-log.md) | Record of the three adversarial review rounds run before implementation |
