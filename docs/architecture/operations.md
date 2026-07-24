@@ -1,285 +1,305 @@
-# MORROW 実行・スコープ・運用
+# MORROW Execution, Scope, and Operations
 
-> 設計の全体像は [design.md](design.md) を参照。
+> For the full design overview, see [design.md](design.md).
 
-## 7. 実行と隔離
+## 7. Execution and isolation
 
 ```
-<work_root>/<run_id>/            worktree（agent の cwd）
+<work_root>/<run_id>/            worktree (agent's cwd)
 <state_root>/<experiment_id>/
     plan.json  policy/  pack/  regression-tests/  acceptance-tests/
-    agent-home/<run_id>/         ← ★ run ごとに独立（読み取り専用テンプレートから複製）
-    venvs/<run_id>/              ← worktree の外
+    agent-home/<run_id>/         ← ★ isolated per run (cloned from a read-only template)
+    venvs/<run_id>/              ← outside the worktree
     snapshots/<run_id>.pre/
     launcher-log/<run_id>.jsonl
 ```
 
-| 項目 | 実装 |
+| Item | Implementation |
 |---|---|
-| プロセス群の停止 | `setsid` → `killpg(SIGTERM)` → 猶予後 `SIGKILL` → **プロセスグループ消滅を確認してから post スナップショット** |
-| 予算上限 | `--max-budget-usd` |
-| 壁時計上限 | `asyncio.wait_for` |
-| config の独立性 | run ごとに `agent-home` を複製。session / cache の漏れを防ぐ |
-| 実行順 | AB / BA を同数。plan.json に事前登録 |
-| 並列度 | **1（逐次）**。並列にすると resource contention が treatment 差に混入する |
-| variant の秘匿 | **cwd 名・プロンプト・環境変数から `baseline` / `candidate` を除く**。<br>等長の opaque `run_id` のみを使い、対応表は evaluator が持つ |
+| Stopping the process group | `setsid` → `killpg(SIGTERM)` → `SIGKILL` after a grace period → **confirm the process group is gone before the post snapshot** |
+| Budget cap | `--max-budget-usd` |
+| Wall-clock cap | `asyncio.wait_for` |
+| Config isolation | Clone `agent-home` per run to prevent session/cache leakage |
+| Run order | Equal numbers of AB and BA, pre-registered in plan.json |
+| Concurrency | **1 (sequential)**. Running in parallel lets resource contention leak into the treatment difference |
+| Variant concealment | **Strip `baseline` / `candidate` from cwd names, prompts, and environment variables.**<br>Use only equal-length opaque `run_id`s; the evaluator holds the mapping |
 
-### 7.1 ステップ数は観測するが強制しない
+### 7.1 Steps are observed but not enforced
 
-`agent_steps = distinct な tool_ref 数`。
-ただし**上限強制は P0 では行わない**（1 イベント内の並列 tool_use を含め、
-確実に止められることを検証できていないため）。
-記録するのは `observed_steps` のみで、`limit_enforced` という主張はしない。
-強制するのは壁時計時間と予算だけである。
+`agent_steps = number of distinct tool_ref`.
+However, **no step cap is enforced in P0** (including parallel tool_use within a
+single event, because we cannot yet verify that the process can reliably be
+stopped). We record only `observed_steps` and make no `limit_enforced` claim.
+Only wall-clock time and budget are enforced.
 
-### 7.2 これはセキュリティ境界ではない
+### 7.2 This is not a security boundary
 
-§2 のとおり。worktree・`cwd`・`CLAUDE_CONFIG_DIR`・プロセスグループは
-ホスト侵害への防御ではない。信頼済みリポジトリでのみ実行する。
+As stated in §2. The worktree, `cwd`, `CLAUDE_CONFIG_DIR`, and process group are
+not a defense against host compromise. Run this only on trusted repositories.
 
 ---
 
-## 8. スコープ（P0 を本当に減らす）
+## 8. Scope (genuinely reducing P0)
 
-R3 の指摘を受け、**機能を足さずに減らす**。
+Following the R3 findings, we **reduce rather than add features**.
 
 ### P0
 
-| 領域 | 内容 |
+| Area | Contents |
 |---|---|
-| provider | Claude Code のみ |
-| 未来タスク | 1 件 |
-| シナリオ | `null` と `coupling` の 2 つ |
-| 反復 | K=4 pair × 2 シナリオ = **16 run** |
-| 成分 | **3 つ**（`files_read_distinct` / `test_cycles` / `final_churn`） |
-| モード | `measure` / `verify` / `gate`（`gate` は記録済みレポートに規則を当てる薄い層） |
-| 判定 | §4.2 の状態機械 |
-| 観測 | OTel → SigNoz にトラジェクトリ 2 本 + ダッシュボード 1 画面（手動インポート可） |
-| 出力 | `morrow-report.md` / `morrow-report.json` |
-| テスト | unit（摩擦・判定・正規化・射影・churn）/ contract（76 行 fixture・golden bytes）/ architecture / e2e（`verify`） |
-| 文書 | README（§0.1 の主張表を含む）・デモ動画・AI 利用申告 |
+| provider | Claude Code only |
+| future task | 1 |
+| scenarios | 2: `null` and `coupling` |
+| repetitions | K=4 pairs × 2 scenarios = **16 runs** |
+| components | **3** (`files_read_distinct` / `test_cycles` / `final_churn`) |
+| modes | `measure` / `verify` / `gate` (`gate` is a thin layer that applies rules to an already-recorded report) |
+| decision | the state machine in §4.2 |
+| observability | OTel → SigNoz, 2 trajectories + 1 dashboard screen (manual import allowed) |
+| output | `morrow-report.md` / `morrow-report.json` |
+| tests | unit (friction / decision / normalization / projection / churn) / contract (76-line fixture, golden bytes) / architecture / e2e (`verify`) |
+| docs | README (including the claims table from §0.1), demo video, AI-usage disclosure |
 
-### P1 以降（P0 に戻す条項は置かない）
+### P1 and beyond (no clause to fold anything back into P0)
 
-Codex アダプタ / `fixed` シナリオ / ASR の一般化 / テスト ID 単位の spill /
-SigNoz を判定入力にする経路 / `--audit-signoz` / MCP / アラート自動化 /
-シェル文法の汎用パース / OS レベル隔離 / 署名・provenance / デモリポジトリの自動化
+Codex adapter / `fixed` scenario / generalizing ASR / per-test-ID spill /
+routing SigNoz into the decision / `--audit-signoz` / MCP / alert automation /
+general-purpose shell-grammar parsing / OS-level isolation / signing and
+provenance / demo-repo automation
 
-### コストと時間
+### Cost and time
 
-| | 1 run | P0 合計 |
+| | 1 run | P0 total |
 |---|---|---|
-| コスト | $0.16〜0.59（実測） | 16 run で **$3〜10** |
-| 所要 | 3〜8 分 | **逐次で 50〜130 分**（並列にしない） |
+| Cost | $0.16–0.59 (measured) | **$3–10** for 16 runs |
+| Duration | 3–8 min | **50–130 min sequential** (never parallel) |
 
 ---
 
-## 9. デモ設計
+## 9. Demo design
 
-| ID | baseline | candidate | 事前登録した仮説 |
+| ID | baseline | candidate | Pre-registered hypothesis |
 |---|---|---|---|
-| `null` | `main` の独立クローン A | `main` の独立クローン B | `FFR_gate ≤ 1.20` |
-| `coupling` | `main` | `pr/1`（domain が Redis を直 import） | `FFR_gate > 1.50` |
+| `null` | independent clone A of `main` | independent clone B of `main` | `FFR_gate ≤ 1.20` |
+| `coupling` | `main` | `pr/1` (domain imports Redis directly) | `FFR_gate > 1.50` |
 
-**「期待どおりの verdict が出ること」を完了条件にしない。**
+**"Getting the expected verdict" is not a completion criterion.**
 
-| 起きたこと | どうするか |
+| What happened | What we do |
 |---|---|
-| `null` が許容帯を外れた | 全シナリオを `INVALID_EXPERIMENT`。閾値を緩めない。「この環境では分離できなかった」と報告する |
-| `coupling` が BLOCK にならなかった | **そのまま報告する。**再録画して都合のよい結果を採らない |
-| 一部 pair が無効化された | 理由付きで残し、レポートに件数を出す |
+| `null` fell outside the tolerance band | Mark all scenarios `INVALID_EXPERIMENT`. Do not loosen the threshold. Report "this environment could not separate the signal" |
+| `coupling` did not BLOCK | **Report it as-is.** Do not re-record and cherry-pick a convenient result |
+| Some pairs were invalidated | Keep them with a reason, and report the counts |
 
-### 9.1 構造的なコスト差
+### 9.1 The structural cost difference
 
-未来タスク: 「ローカル・テスト環境向けのインメモリキャッシュを追加せよ。order-service の API は変えないこと」
+Future task: "Add an in-memory cache for local and test environments. Do not change the order-service API."
 
 ```
-main : orders/adapters/memory_cache.py を新規作成 + composition.py の 1 行   → 2 ファイル
-pr/1 : order_service / pricing / inventory / promotions から redis を剥がし、
-       抽象を新規に発明し、redis 固有のテストを直す                          → 6〜9 ファイル
+main : create orders/adapters/memory_cache.py + 1 line in composition.py    → 2 files
+pr/1 : strip redis out of order_service / pricing / inventory / promotions,
+       invent a new abstraction, and fix redis-specific tests               → 6–9 files
 ```
 
-不変条件 `orders.domain は redis を import しない` が「全部剥がす」を強制する。
-現行テストは両者で通る（`fakeredis` を使い外部サーバ依存をゼロにする）。
+The invariant `orders.domain does not import redis` forces the "strip it all out"
+path. The current tests pass for both (using `fakeredis` to make external-server
+dependencies zero).
 
 ---
 
-## 10. アーキテクチャと層の強制
+## 10. Architecture and layer enforcement
 
 ```
 src/morrow/
-├── domain/        純粋。stdlib + pydantic のみ
+├── domain/        pure. stdlib + pydantic only
 │   ├── events.py  metrics.py  assessment.py
-│   ├── friction.py     ★ 摩擦計算（純関数）
-│   └── policy.py       ★ evaluate_policy / enforce（純関数）
+│   ├── friction.py     ★ friction computation (pure functions)
+│   └── policy.py       ★ evaluate_policy / enforce (pure functions)
 ├── application/   validate_evidence / measure / verify
 ├── adapters/      claude/ fs/ git/ otel/ report/
 └── cli/
 ```
 
-| 層 | import 許可（positive allowlist） |
+| Layer | Allowed imports (positive allowlist) |
 |---|---|
 | `domain` | `morrow.domain`, `pydantic`, `enum`, `math`, `statistics`, `decimal`, `dataclasses`, `typing`, `collections.abc`, `hashlib` |
-| `application` | 上記 + `morrow.application`, `abc`, `asyncio` |
-| `adapters` | 上記 + `morrow.adapters` + 任意の外部 |
-| `cli` | すべて |
+| `application` | the above + `morrow.application`, `abc`, `asyncio` |
+| `adapters` | the above + `morrow.adapters` + any external |
+| `cli` | everything |
 
-`tests/architecture/test_layers.py` が AST を走査し、許可されない `import` を検出したら fail。
-`importlib` / `__import__` の呼び出しも別規則で検出する。
+`tests/architecture/test_layers.py` walks the AST and fails on any disallowed
+`import`. Calls to `importlib` / `__import__` are caught by a separate rule.
 
-**保証範囲の正直な記述**: これは**静的 import に対する検査**である。
-`eval` や属性経由の間接呼び出しは捕捉しない。テストの docstring にそう書く。
+**Honest statement of coverage**: this is a **check on static imports**. It does
+not catch `eval` or indirect calls via attributes. The test's docstring says so.
 
 ---
 
 ## 11. SigNoz / OpenTelemetry
 
-**判定が終わった後に送出する。**テレメトリ障害が verdict を変えないことを構造的に保証する。
+**Emit after the decision is made.** This structurally guarantees that a
+telemetry failure cannot change the verdict.
 
-| 面 | 内容 |
+| Surface | Contents |
 |---|---|
-| Traces | `morrow.experiment` → `morrow.pair` → `morrow.run` → 各操作（**エージェントの作業軌跡そのもの**） |
-| Metrics | 成分ごとの pair 別値、`FFR_gate` / `FFR_display`、成功数、有効 pair 数 |
-| Logs | 正規化イベント（自由文なし）と判定理由 |
-| Dashboard | `dashboards/morrow.json` をコミット |
-| Alert | `morrow.future_friction_ratio > 閾値`（デモ用。判定の権威はポリシーエンジン） |
+| Traces | `morrow.experiment` → `morrow.pair` → `morrow.run` → each operation (**the agent's work trajectory itself**) |
+| Metrics | per-pair values per component, `FFR_gate` / `FFR_display`, success count, valid-pair count |
+| Logs | normalized events (no free text) and the decision rationale |
+| Dashboard | commit `dashboards/morrow.json` |
+| Alert | `morrow.future_friction_ratio > threshold` (for the demo; the authority for the decision is the policy engine) |
 
-**SigNoz を判定入力にしない。**非同期送出・取り込み遅延・重複投入により
-同じ証拠から別の verdict が出るため、C4（決定論）が嘘になる。
+**Do not route SigNoz into the decision.** Asynchronous emission, ingestion lag,
+and duplicate submission would let the same evidence yield a different verdict,
+which would make C4 (determinism) a lie.
 
 ---
 
-## 12. 公開済み評価資材スナップショット（「事前登録」とは呼ばない）
+## 12. Published evaluator snapshot (not called "pre-registration")
 
-R3 の指摘どおり、annotated tag の日時は指定でき、tag は移動・削除できる。
-**第三者が検証できる事前登録にはならない。**
+As the R3 findings note, an annotated tag's timestamp can be set, and tags can be
+moved or deleted. **It does not constitute a pre-registration that a third party
+can verify.**
 
-v4 で実際に行うこと:
+What v4 actually does:
 
-1. 録画前に、以下を public remote に push する。
+1. Before recording, push the following to a public remote:
 
    ```
    src/  policies/  future-packs/  regression-tests/  acceptance-tests/
    prompts/  uv.lock  experiments/<id>.plan.json
        plan.json = { K, run_order, model, provider CLI version, limits,
-                     再試行規則, ヌルの許容帯と外れた場合の処理 }
+                     retry rules, null tolerance band and handling when it is exceeded }
    ```
 
-2. 各カセットの manifest に `source_tree_digest`（カセットを除く）と `plan_sha256` を書く。
-3. **全試行を記録する。**無効化した pair も理由付きで残す。
-4. レポートに「試行 N pair、有効 M、無効 K（理由）」を必ず出す。
-5. 凍結対象を録画後に変更したら、その実験を破棄して新しい実験 ID を発行する。
-   古いカセットに新しい policy を当てて再計算しない。
+2. In each cassette's manifest, record `source_tree_digest` (excluding the
+   cassette) and `plan_sha256`.
+3. **Record every attempt.** Keep invalidated pairs with a reason.
+4. Always report "N pairs attempted, M valid, K invalid (reason)" in the report.
+5. If a frozen artifact is changed after recording, discard that experiment and
+   issue a new experiment ID. Do not recompute by applying a new policy to an old
+   cassette.
 
-**主張の強度**: これは「私が結果を見てから物差しを調整しなかった」ことを
-**運用として担保する仕組み**であって、第三者への証明ではない。README にそう書く。
-
----
-
-## 13. テスト戦略
-
-必ず書くテスト:
-
-* §4.2 の**状態 × モードの全組み合わせ**について終了コードを固定する
-* **fail-open の不在**: 証拠・インフラ・信頼境界・比較不能のエラーが**全モードで exit 2**
-* **pairing**: `r[i,p]` を pair 内で計算してから中央値を取る（variant 別中央値の比と結果が異なる例で固定）
-* **相殺しないこと**: `r = [10.0, 0.1]` → `FFR_gate > 1`
-* **`ADAPTATION_REGRESSION` が到達可能**: candidate 全失敗 + baseline 全成功で発火する
-* **churn**: 新規ファイルのみ作成した run で `final_churn > 0`
-* **churn**: `git add` / `git commit` / `.gitignore` 変更後も正しい
-* **churn**: 受入コマンドが作った `.pytest_cache` が計上されない（スナップショット順序）
-* **venv**: エージェントが venv にパッケージを入れても受入判定が変わらない
-* **テスト分離**: `acceptance-tests` が pre で落ちても実験は無効化されない
-* **回帰**: 凍結テストを worktree 側で書き換えても検出される
-* **ランチャ**: 直接 `pytest` を叩いた run が `EVIDENCE_INCOMPLETE` になる
-* **schema スコープ**: K=4 の正しい証拠が `seq=0` の重複で弾かれない
-* **schema**: 孤立 `tool_result` / 重複 `tool_ref` / 非連続 `seq` → `EVIDENCE_INVALID`
-* **manifest**: 列挙されていないファイルの存在 → `EVIDENCE_INCOMPLETE`
-* **policy**: `component_hard_max > clamp_ratio` や `minimum_valid_pairs > runs_per_variant` を拒否
-* **境界**: `FFR_gate` が閾値ちょうど → PASS（log 空間 + epsilon）
-* **射影**: 生イベントにシークレットとソース断片を仕込み、出力に一切現れない
-* **golden bytes**: 同じ入力から常に同一バイト列の JSONL が出る
-* **fixture inventory**: 採取した 76 行の `raw_kind` 別件数が一致し、未分類 0 件
-* **tree walk**: symlink を追わない / FIFO で `INVALID_RUN`
+**Strength of the claim**: this is an **operational mechanism that ensures I did
+not tune the yardstick after seeing the result**, not a proof to a third party.
+The README says so.
 
 ---
 
-## 14. クリティカルパス（27 時間）
+## 13. Test strategy
 
-| ゲート | JST | 内容 | 担当 |
+Tests we must write:
+
+* Fix the exit code for **every state × mode combination** in §4.2
+* **Absence of fail-open**: evidence / infrastructure / trust-boundary /
+  incomparable errors **exit 2 in every mode**
+* **pairing**: compute `r[i,p]` within a pair before taking the median (pinned
+  with an example where the result differs from the ratio of per-variant medians)
+* **No cancellation**: `r = [10.0, 0.1]` → `FFR_gate > 1`
+* **`ADAPTATION_REGRESSION` is reachable**: fires when candidate fails entirely
+  and baseline succeeds entirely
+* **churn**: `final_churn > 0` for a run that only creates new files
+* **churn**: correct after `git add` / `git commit` / `.gitignore` changes
+* **churn**: a `.pytest_cache` created by the acceptance command is not counted
+  (snapshot ordering)
+* **venv**: an acceptance verdict does not change even if the agent installs
+  packages into the venv
+* **test isolation**: an experiment is not invalidated if `acceptance-tests` fail
+  in the pre state
+* **regression**: detected even if the frozen tests are rewritten on the worktree
+  side
+* **launcher**: a run that invoked `pytest` directly becomes `EVIDENCE_INCOMPLETE`
+* **schema scope**: correct evidence for K=4 is not rejected due to a `seq=0`
+  duplicate
+* **schema**: an orphan `tool_result` / duplicate `tool_ref` / non-contiguous
+  `seq` → `EVIDENCE_INVALID`
+* **manifest**: presence of a file not listed → `EVIDENCE_INCOMPLETE`
+* **policy**: reject `component_hard_max > clamp_ratio` or
+  `minimum_valid_pairs > runs_per_variant`
+* **boundary**: `FFR_gate` exactly at the threshold → PASS (log space + epsilon)
+* **projection**: plant a secret and source fragments in the raw events, and
+  confirm they never appear in the output
+* **golden bytes**: the same input always produces byte-identical JSONL
+* **fixture inventory**: the per-`raw_kind` counts of the 76 collected lines
+  match, with 0 unclassified
+* **tree walk**: does not follow symlinks / `INVALID_RUN` on a FIFO
+
+---
+
+## 14. Critical path (27 hours)
+
+| Gate | JST | Contents | Owner |
 |---|---|---|---|
-| **G0** | 07-25 07:00 | scaffold / `mise run check` green / 設計をコミット | Claude |
-| **G1** | 07-25 09:30 | **`foundryctl` で SigNoz 起動、smoke trace、`casting.yaml(.lock)` コミット** | **人間（host）** |
-| **G2** | 07-25 14:00 | 正規化 → 検証 → 摩擦 → 判定 → レポート。§13 の必須テストが green | Claude + サブエージェント |
-| **G3** | 07-25 16:00 | デモリポジトリ（`main` / `pr/1`）、両方で現行テスト green、**評価資材を push** | サブエージェント |
-| **G4** | 07-25 21:00 | **16 run を逐次録画**（null 8 + coupling 8）。事前登録規則を適用し無選別で記録 | Claude |
-| **G5** | 07-25 23:30 | OTel → SigNoz に軌跡表示、ダッシュボード、`morrow verify` が green | Claude |
-| **G6** | 07-26 02:00 | GitHub push、CI green、デモ PR にチェック表示 | Claude |
-| **G7** | 07-26 05:00 | **コードフリーズ**。README / 構成図 / スクリーンショット | Claude + 人間 |
-| **G8** | 07-26 07:30 | デモ動画・提出文・AI 利用申告 | 人間 |
-| **G9** | **07-26 09:00** | **提出** | 人間 |
+| **G0** | 2026-07-25 07:00 JST | scaffold / `mise run check` green / commit the design | Claude |
+| **G1** | 2026-07-25 09:30 JST | **Bring up SigNoz with `foundryctl`, smoke trace, commit `casting.yaml(.lock)`** | **Human (host)** |
+| **G2** | 2026-07-25 14:00 JST | normalize → validate → friction → decide → report. The required tests in §13 are green | Claude + subagents |
+| **G3** | 2026-07-25 16:00 JST | demo repo (`main` / `pr/1`), current tests green on both, **push the evaluator artifacts** | subagent |
+| **G4** | 2026-07-25 21:00 JST | **Record 16 runs sequentially** (null 8 + coupling 8). Apply the pre-registered rules and record without cherry-picking | Claude |
+| **G5** | 2026-07-25 23:30 JST | trajectories visible in OTel → SigNoz, dashboard, `morrow verify` green | Claude |
+| **G6** | 2026-07-26 02:00 JST | GitHub push, CI green, checks visible on the demo PR | Claude |
+| **G7** | 2026-07-26 05:00 JST | **code freeze**. README / diagrams / screenshots | Claude + human |
+| **G8** | 2026-07-26 07:30 JST | demo video, submission text, AI-usage disclosure | human |
+| **G9** | **2026-07-26 09:00 JST** | **submit** | human |
 
-**バッファ**: G4 → G5 の間に 2.5 時間、G6 → G7 に 3 時間を確保した。
-録画のやり直しとヌル不合格に備える。
+**Buffers**: 2.5 hours between G4 and G5, and 3 hours between G6 and G7, reserved
+for re-recording and for a null that fails.
 
-### 14.1 G1 を人間に移した理由
+### 14.1 Why G1 was moved to the human
 
-サンドボックスから docker socket に到達できないことが実測で判明している。
-クリティカルパス最初の 2.5 時間を、実行できない担当に割り当てない。
+It is empirically established that the sandbox cannot reach the docker socket. We
+do not assign the first 2.5 hours of the critical path to an owner who cannot
+execute it.
 
-### 14.2 並列レーン
+### 14.2 Parallel lanes
 
-| レーン | 担当 | 範囲 |
+| Lane | Owner | Scope |
 |---|---|---|
-| A | Claude Code（本セッション） | 実行アダプタ・OTel・録画・統合 |
-| B | サブエージェント | `src/morrow/domain/` + `tests/unit/` |
-| C | サブエージェント | `demo/` + デモリポジトリ |
-| D | 人間 | G1・登録・提出フォーム・動画 |
+| A | Claude Code (this session) | execution adapter, OTel, recording, integration |
+| B | subagent | `src/morrow/domain/` + `tests/unit/` |
+| C | subagent | `demo/` + demo repo |
+| D | human | G1, registration, submission form, video |
 
 ---
 
-## 15. ハッカソン公式要件（一次情報で確認済み）
+## 15. Official hackathon requirements (verified against primary sources)
 
-| 項目 | 確認結果 |
+| Item | Verification |
 |---|---|
-| **Foundry 必須** | rules に "Install SigNoz using Foundry. Foundry installs both SigNoz and its MCP server in one step." |
-| CLI 名 | `foundryctl`。`gauge` / `forge` / `cast`（`-f casting.yaml`） |
-| **必須ファイル** | rules に "Your repo must include the casting.yaml and casting.yaml.lock." |
-| トラック | 01 AI & Agent Observability（これで出す） |
-| 審査 | 定性のみ。"The more SigNoz features you use, the better your chances" |
-| **AI 利用の未開示は失格** | README と提出フォームの両方に書く |
-| 締切 | **プロジェクト提出の日時・タイムゾーンは公式に記載なし** |
+| **Foundry required** | The rules state: "Install SigNoz using Foundry. Foundry installs both SigNoz and its MCP server in one step." |
+| CLI name | `foundryctl`. `gauge` / `forge` / `cast` (`-f casting.yaml`) |
+| **Required files** | The rules state: "Your repo must include the casting.yaml and casting.yaml.lock." |
+| Track | 01 AI & Agent Observability (this is what we submit under) |
+| Judging | Qualitative only. "The more SigNoz features you use, the better your chances" |
+| **Non-disclosure of AI use is disqualifying** | State it in both the README and the submission form |
+| Deadline | **The submission date, time, and time zone are not stated officially** |
 
-### 15.1 未検証の伝聞（事実として扱わない）
+### 15.1 Unverified second-hand information (not treated as fact)
 
-* 「`foundryctl forge` が `casting.yaml.lock` を生成する」
-* 「MCP は既定で無効で `spec.mcp.spec.enabled: true` が必要」
-* 「`casting.yaml` に `kind: Installation` が必須」
+* "`foundryctl forge` generates `casting.yaml.lock`"
+* "MCP is disabled by default and requires `spec.mcp.spec.enabled: true`"
+* "`casting.yaml` requires `kind: Installation`"
 
-G1 で `foundryctl --help` と実際の生成物から確認する。
+Confirm these in G1 from `foundryctl --help` and the actual generated artifacts.
 
-### 15.2 G1 の受入条件
+### 15.2 G1 acceptance criteria
 
 ```
-[ ] foundryctl を固定バージョンで導入し、version と checksum を記録する
-[ ] gauge → forge → 生成された casting.yaml.lock を検証してコミット → cast
-[ ] lock が自動生成されない場合、手作りせず G1 を失敗として扱い原因を記録する
-[ ] SigNoz UI が開く
-[ ] OTLP へ smoke trace を送り、SigNoz 側でクエリできる
+[ ] Install foundryctl at a pinned version and record its version and checksum
+[ ] gauge → forge → verify and commit the generated casting.yaml.lock → cast
+[ ] If the lock is not auto-generated, do not hand-craft it; treat G1 as failed and record the cause
+[ ] The SigNoz UI opens
+[ ] Send a smoke trace to OTLP and query it in SigNoz
 ```
 
 ---
 
-## 16. リスク
+## 16. Risks
 
-| 項目 | 状態 | 対応 |
+| Item | Status | Response |
 |---|---|---|
-| `foundryctl` と `casting.yaml.lock` | **未検証** | G1 で人間が実行。失敗なら原因を README に記録 |
-| ヌルの `FFR_gate` が 1.20 を超える | **未知**。超えたら測定器として不合格 | 閾値を緩めず「分離できなかった」と報告する（§9） |
-| K=4 でも分散が大きい | あり得る | **全 pair の `r[i,p]` をレポートに出す**。中央値だけを見せない |
-| 16 run が時間内に終わらない | 逐次 50〜130 分 | G4 に 5 時間確保。超過したら `coupling` を優先し `null` を先に取る |
-| OS レベル隔離が無い | **未実装（P1）** | C5 として「主張しない」に明記 |
-| 実行環境の逼迫 | 6 CPU / 15.6 GiB | **並列にしない**（contention を treatment 差に混ぜない） |
+| `foundryctl` and `casting.yaml.lock` | **Unverified** | Human executes in G1. On failure, record the cause in the README |
+| The null's `FFR_gate` exceeds 1.20 | **Unknown**. If exceeded, the instrument fails | Do not loosen the threshold; report "could not separate" (§9) |
+| Variance is large even at K=4 | Possible | **Report every pair's `r[i,p]`.** Do not show only the median |
+| 16 runs do not finish in time | 50–130 min sequential | 5 hours reserved for G4. On overrun, prioritize `coupling` and record `null` first |
+| No OS-level isolation | **Not implemented (P1)** | Explicitly stated as C5: "we do not claim this" |
+| Constrained execution environment | 6 CPU / 15.6 GiB | **Do not parallelize** (do not mix contention into the treatment difference) |
 
 ---
-

@@ -1,227 +1,220 @@
-# MORROW 計測モデルと信頼境界
+# MORROW Measurement Model and Trust Boundary
 
-> 設計の全体像は [design.md](design.md) を参照。
+> For the overall design, see [design.md](design.md).
 
-## 2. 信頼境界（主張を正確に）
+## 2. Trust boundary (stating the claim precisely)
 
 ```
-evaluator 資材（worktree の外に置く）
+evaluator assets (kept outside the worktree)
     <state_root>/<experiment_id>/
         plan.json  policy/  pack/  regression-tests/  acceptance-tests/
-        snapshots/<run_id>.pre/          ← pre ツリーの実体コピー（§3.4）
-        launcher-log/<run_id>.jsonl      ← テスト実行の一次記録（§6.4）
+        snapshots/<run_id>.pre/          ← full content copy of the pre tree (§3.4)
+        launcher-log/<run_id>.jsonl      ← primary record of test execution (§6.4)
 
-measured 資材（agent の cwd）
-    <work_root>/<run_id>/                ← worktree。ここだけが agent の作業対象
+measured assets (the agent's cwd)
+    <work_root>/<run_id>/                ← worktree. The only thing the agent works on
 ```
 
-**これは権限境界ではない。**
-agent は同一 UID で動くため、`<state_root>` にも到達できる。
-worktree の外に置くのは**事故と取り違えの防止**であり、敵対的エージェントには効かない。
+**This is not a permission boundary.**
+The agent runs under the same UID, so it can reach `<state_root>` as well.
+Keeping evaluator assets outside the worktree is **accident prevention and mix-up avoidance**, not a defense against an adversarial agent.
 
-したがって **`measure` / `gate` は信頼済みリポジトリでのみ実行する**（C5）。
-OS レベルの隔離（別 UID / コンテナ / ネットワーク遮断）は P1 以降。
+Therefore, **`measure` / `gate` run only on trusted repositories** (C5).
+OS-level isolation (a separate UID / container / network cutoff) is deferred to P1 and later.
 
-`UNTRUSTED_TARGET` の判定は、リポジトリ名の許可リストではなく以下の**全一致**で行う:
+`UNTRUSTED_TARGET` is decided not by an allowlist of repository names but by requiring **all** of the following to match:
 
 ```
-target.repository      == 許可リストのいずれか
-target.head_repository == target.repository        # fork からの PR を弾く
-trigger                ∈ {workflow_dispatch, push}  # pull_request / pull_request_target は不可
-head_sha               ∈ 明示的に承認した SHA
+target.repository      == one of the allowlist entries
+target.head_repository == target.repository        # reject PRs from forks
+trigger                ∈ {workflow_dispatch, push}  # pull_request / pull_request_target not allowed
+head_sha               ∈ explicitly approved SHAs
 ```
 
-いずれか一つでも外れたら、**エージェントを起動する前に exit 2**。
+If even one of these fails, **exit 2 before launching the agent**.
 
 ---
 
-## 3. 計測モデル
+## 3. Measurement model
 
-### 3.1 対反復（pair）
+### 3.1 Paired runs (pair)
 
-R3 の指摘どおり、v3 は「variant ごとに中央値 → 比」で **pairing を捨てていた**。
-これでは時間ドリフトや warm cache の影響を treatment 差と誤認する。
+As R3 pointed out, v3 took "median per variant, then ratio" and **discarded pairing** in the process.
+That mistakes time drift and warm-cache effects for a treatment difference.
 
 ```
-K = 4（偶数。AB / BA を同数にするため）
+K = 4 (even, so that AB and BA occur equally often)
 
 pair p ∈ {0,1,2,3}
-    各 pair は baseline run と candidate run を隣接して実行する
-    実行順  p=0: A→B   p=1: B→A   p=2: A→B   p=3: B→A
+    each pair runs a baseline run and a candidate run back to back
+    order  p=0: A→B   p=1: B→A   p=2: A→B   p=3: B→A
 
-成分 i、pair p:
+component i, pair p:
     r[i,p] = clamp( (c[i,p] + α) / (b[i,p] + α),  1/R,  R )
 
-成分 i:
-    r[i]   = median_p( r[i,p] )        ← ★ pair 比の中央値。variant 別中央値の比ではない
+component i:
+    r[i]   = median_p( r[i,p] )        ← ★ median of the pair ratios, not a ratio of per-variant medians
 
 FFR_gate    = exp( Σ wᵢ · ln( max(1, r[i]) ) / Σ wᵢ )
 FFR_display = exp( Σ wᵢ · ln( r[i] )         / Σ wᵢ )
 ```
 
-**レポートには `r[i,p]` を全部出す。**中央値だけを見せない。
-4 本の比がどれくらいばらついているかは、読者が自分で判断すべき情報である。
+**The report shows every `r[i,p]`.** It does not show only the median.
+How much the four ratios scatter is information the reader should judge for themselves.
 
-### 3.2 pair の有効性と再試行
+### 3.2 Pair validity and retries
 
-| 事象 | 扱い |
+| Event | Handling |
 |---|---|
-| pair の片方が infra 障害（MORROW のクラッシュ / API 障害 / worktree 作成失敗） | **pair 全体を無効化** |
-| 無効化した pair の再実行 | `policy.experiment.max_pair_retries`（既定 2）まで。**事前に登録する** |
-| 有効 pair < `policy.experiment.minimum_valid_pairs`（既定 3） | `INFRASTRUCTURE_ERROR` → **exit 2** |
+| One side of a pair hits an infra failure (MORROW crash / API outage / worktree creation failure) | **Invalidate the whole pair** |
+| Re-running an invalidated pair | Up to `policy.experiment.max_pair_retries` (default 2). **Registered in advance** |
+| Valid pairs < `policy.experiment.minimum_valid_pairs` (default 3) | `INFRASTRUCTURE_ERROR` → **exit 2** |
 
-エージェントの時間切れ・予算超過は infra 障害ではなく **`success = 0`** として扱う（有効な観測）。
+An agent hitting its time limit or exceeding its budget is not an infra failure; it counts as **`success = 0`** (a valid observation).
 
-### 3.3 成分（本当に相互排他にする）
+### 3.3 Components (making them genuinely mutually exclusive)
 
-R3 の指摘どおり、v3 の `other_tool_calls` は `PATCH` を含み、その結果の行差分が `final_churn` にも入るため
-**同じ編集を 2 軸で重複加重していた**。v4 では 3 成分に絞る。
+As R3 pointed out, v3's `other_tool_calls` included `PATCH`, and the resulting line diff also flowed into `final_churn`, so **the same edit was weighted twice on two axes**. v4 narrows this to three components.
 
-| 成分 | 重み | 一次ソース | 何を測るか |
+| Component | Weight | Primary source | What it measures |
 |---|---|---|---|
-| `files_read_distinct` | 1.0 | `FILE_READ` の distinct な path ID | 理解しなければならない範囲 |
-| `test_cycles` | 1.0 | **テストランチャの記録**（§6.4） | 試行錯誤の回数 |
-| `final_churn` | 1.0 | **pre ツリー実体との差分**（§3.4） | 実装の物理量 |
+| `files_read_distinct` | 1.0 | distinct path IDs in `FILE_READ` | the surface area that must be understood |
+| `test_cycles` | 1.0 | **test launcher record** (§6.4) | how much trial and error |
+| `final_churn` | 1.0 | **diff against the pre tree content** (§3.4) | the physical volume of the implementation |
 
-`SEARCH` / `PATCH` / `COMMAND` / `TOOL_OTHER` の件数は**記録し表示するが、gate には使わない**。
-`output_tokens` / `api_duration_ms` / `cost_usd` も同様に表示のみ。
+The counts of `SEARCH` / `PATCH` / `COMMAND` / `TOOL_OTHER` are **recorded and displayed, but not used by the gate**.
+`output_tokens` / `api_duration_ms` / `cost_usd` are likewise display-only.
 
-**成分集合は policy に固定する。**必須成分が片側でも欠けたら `EVIDENCE_INCOMPLETE` → exit 2。
+**The component set is fixed in policy.** If a required component is missing on either side, `EVIDENCE_INCOMPLETE` → exit 2.
 
-### 3.4 churn（pre ツリーの実体を保持する）
+### 3.4 Churn (retaining the actual content of the pre tree)
 
-R3 の指摘は情報理論的に正しい。**`(サイズ, sha256)` からは行差分を復元できない。**
-
-```
-① worktree 作成
-② pre スナップショット:  worktree の実体を <state_root>/snapshots/<run_id>.pre/ へコピー
-③ エージェント実行
-④ agent のプロセスグループ消滅を確認
-⑤ post スナップショット: worktree を tree walk
-⑥ final_churn = pre ツリーと post ツリーの実ファイル差分
-⑦ 受入・回帰テストを実行（★ churn 確定より後。生成物は計上されない）
-```
-
-デモリポジトリは小さい（数百 KB）ので、実体コピーのコストは無視できる。
+R3's point is correct in information-theoretic terms: **a `(size, sha256)` pair cannot reconstruct a line diff.**
 
 ```
-final_churn = Σ 追加ファイルの行数
-            + Σ 削除ファイルの行数
-            + Σ 変更ファイルの (追加行 + 削除行)      ← difflib による実差分
-
-除外: policy.metrics.churn_exclude の固定 allowlist
-      (.venv/, __pycache__/, .pytest_cache/, .ruff_cache/, .git/, *.pyc)
+① create worktree
+② pre snapshot:  copy the worktree content into <state_root>/snapshots/<run_id>.pre/
+③ run the agent
+④ confirm the agent's process group has died
+⑤ post snapshot: tree walk the worktree
+⑥ final_churn = actual file diff between the pre tree and the post tree
+⑦ run acceptance and regression tests (★ after churn is finalized; their artifacts are not counted)
 ```
 
-### 3.4.1 tree walk の安全性と決定性
+The demo repository is small (a few hundred KB), so the cost of a full content copy is negligible.
 
-| 対象 | 扱い |
+```
+final_churn = Σ lines in added files
+            + Σ lines in deleted files
+            + Σ (added lines + deleted lines) in changed files   ← actual diff via difflib
+
+Excluded: the fixed allowlist in policy.metrics.churn_exclude
+          (.venv/, __pycache__/, .pytest_cache/, .ruff_cache/, .git/, *.pyc)
+```
+
+### 3.4.1 Tree walk safety and determinism
+
+| Target | Handling |
 |---|---|
-| symlink | **追わない**（`lstat`）。リンク先の文字列長のみを記録し、内容は読まない |
-| FIFO / socket / device / ハードリンク多重 | 検出したら **その run を `INVALID_RUN`** |
-| バイナリ（UTF-8 デコード不能） | 行数に混ぜない。**`binary_bytes_changed` として別集計**し、gate には使わない |
-| ファイル数 / 総バイト / 単一ファイルサイズ | policy の上限を超えたら `INVALID_RUN` |
-| 走査中の変更 | 走査前後の mtime 集合が変わっていたら `INVALID_RUN` |
-| 走査順 | 相対パスのバイト列昇順に固定（決定性） |
+| symlink | **not followed** (`lstat`). Only the length of the link target string is recorded; its contents are not read |
+| FIFO / socket / device / hard-link fan-out | if detected, mark that run `INVALID_RUN` |
+| binary (undecodable as UTF-8) | not mixed into line counts. **Tallied separately as `binary_bytes_changed`** and not used by the gate |
+| file count / total bytes / single-file size | if any exceeds the policy limit, `INVALID_RUN` |
+| change during the walk | if the mtime set differs before and after the walk, `INVALID_RUN` |
+| walk order | fixed to ascending byte order of the relative path (determinism) |
 
-バイナリを `bytes/80` で行数に換算する v3 の案は撤回した。単位に意味がなく、
-画像や lockfile の変更だけで指標が跳ねるため。
+The v3 idea of converting binary to a line count via `bytes/80` is withdrawn: the unit is meaningless, and an image or lockfile change alone would spike the metric.
 
-### 3.5 実行環境（エージェントに書き換えさせない）
+### 3.5 Execution environment (not letting the agent rewrite it)
 
-実測で**エージェントが `pip install` した**以上、venv が worktree 内にあると
-「依存を入れて受入テストを通す」が可能になり、しかも `final_churn` は 0 のままになる。
+In practice the **agent ran `pip install`**, so if the venv lives inside the worktree, "install a dependency and make the acceptance tests pass" becomes possible while `final_churn` stays 0.
 
 ```
-venv は worktree の外に作る:
-    <state_root>/venvs/<run_id>/          ← UV_PROJECT_ENVIRONMENT で指定
+Create the venv outside the worktree:
+    <state_root>/venvs/<run_id>/          ← specified via UV_PROJECT_ENVIRONMENT
 
-受入・回帰テストの実行時:
-    リポジトリの lockfile から <state_root>/venvs/<run_id>.verify/ を作り直す
-    → エージェントが入れたパッケージは受入判定に影響しない
+When running acceptance and regression tests:
+    rebuild <state_root>/venvs/<run_id>.verify/ from the repository lockfile
+    → packages the agent installed do not affect the acceptance decision
 
-依存の変更は lockfile の差分として final_churn に現れる（lockfile は worktree 内にある）
+A dependency change surfaces in final_churn as a lockfile diff (the lockfile is inside the worktree)
 ```
 
-### 3.6 成功判定とテストの分離
+### 3.6 Separating the success decision from the tests
 
-R3 の指摘どおり、v3 は「未来タスクの受入テスト」と「既存挙動を守る回帰テスト」を混同していた。
-未来タスクの受入テストは **run 前に落ちているのが正常**なので、
-「pre で落ちていたら実験無効」という規則と衝突する。
+As R3 pointed out, v3 conflated "acceptance tests for the future task" with "regression tests that protect existing behavior."
+Acceptance tests for the future task are **supposed to fail before the run**, which collides with the rule "if pre fails, the experiment is invalid."
 
 ```
-<state_root>/regression-tests/     既存挙動を守る。pre で全通過が必須。post で同一 bytes を再実行
-<state_root>/acceptance-tests/     未来タスクの受入。post でのみ実行（pre では落ちて当然）
+<state_root>/regression-tests/     protect existing behavior. Must all pass at pre. Re-run at the same bytes at post
+<state_root>/acceptance-tests/     acceptance for the future task. Run only at post (failing at pre is expected)
 ```
 
 | | pre | post |
 |---|---|---|
-| `regression-tests` | **全通過が必須**。落ちていたら `EVIDENCE_INCOMPLETE` → exit 2 | 全通過しなければ `REGRESSION` |
-| `acceptance-tests` | 実行しない | 全通過しなければ `success = 0` |
+| `regression-tests` | **must all pass**. If any fail, `EVIDENCE_INCOMPLETE` → exit 2 | if not all pass, `REGRESSION` |
+| `acceptance-tests` | not run | if not all pass, `success = 0` |
 
 ```
-success[v, p] = 1  ⟺  acceptance-tests 全通過
-                    ∧ regression-tests 全通過
-                    ∧ invariants 成立
-                    ∧ 壁時計・予算の上限内
+success[v, p] = 1  ⟺  all acceptance-tests pass
+                    ∧ all regression-tests pass
+                    ∧ invariants hold
+                    ∧ within the wall-clock and budget limits
 ```
 
-実行時の固定条件: `cwd` = worktree ルート、`PYTHONPATH` は設定しない、
-`-p no:cacheprovider` を付ける、プラグイン自動ロードを無効化（`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`）。
+Fixed conditions at execution: `cwd` = worktree root, `PYTHONPATH` unset,
+`-p no:cacheprovider` added, plugin autoloading disabled (`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`).
 
-### 3.7 FFR と適応の判定に使う集合
+### 3.7 The sets used for FFR and the adaptation decision
 
-R3 の指摘どおり、v3 は `comparable_runs >= minimum_paired_runs = 3` かつ K=3 だったため、
-**candidate が 1 回でも失敗すると `ADAPTATION_REGRESSION` に到達できなかった**。
+As R3 pointed out, v3 had `comparable_runs >= minimum_paired_runs = 3` with K=3, so **a single candidate failure made `ADAPTATION_REGRESSION` unreachable**.
 
 ```
-valid_pairs      = infra 的に有効な pair            （§3.2）
-successful_pairs = 両 variant が success した pair
+valid_pairs      = pairs that are valid at the infra level     (§3.2)
+successful_pairs = pairs where both variants succeeded
 
-適応の判定  : valid_pairs 全体で行う
-FFR の計算  : successful_pairs でのみ行う
+Adaptation decision : made over all valid_pairs
+FFR computation     : made over successful_pairs only
 ```
 
-| 条件 | 所見 |
+| Condition | Finding |
 |---|---|
 | `len(valid_pairs) < minimum_valid_pairs` | `INFRASTRUCTURE_ERROR` |
-| baseline の success 数 == 0 | `INCONCLUSIVE`（対照が成立していない） |
-| baseline の success 数 ≥ 閾値 かつ candidate の success 数 == 0 | `ADAPTATION_REGRESSION` |
-| `len(successful_pairs) < minimum_ffr_pairs`（既定 3） | FFR を出さない。`INCONCLUSIVE` |
+| baseline success count == 0 | `INCONCLUSIVE` (the control did not hold) |
+| baseline success count ≥ threshold and candidate success count == 0 | `ADAPTATION_REGRESSION` |
+| `len(successful_pairs) < minimum_ffr_pairs` (default 3) | do not report FFR. `INCONCLUSIVE` |
 | `FFR_gate > policy.decision.friction_threshold` | `FRICTION_REGRESSION` |
-| いずれかの `r[i] > policy.decision.component_hard_max` | `SINGLE_AXIS_REGRESSION` |
+| any `r[i] > policy.decision.component_hard_max` | `SINGLE_AXIS_REGRESSION` |
 
-### 3.8 ヌルコントロールと閾値（循環を断つ）
+### 3.8 Null control and thresholds (breaking the circularity)
 
-**閾値はヌルから導出しない。**導出すると、ヌル自身が同じ規則で自動的に通り、循環する。
+**Thresholds are not derived from the null.** If they were, the null would automatically pass under the same rule, closing a circle.
 
 ```
-閾値 friction_threshold は policy に固定値として書き、
-treatment のデータを見る前に公開スナップショットへ含める（§12）
+The threshold friction_threshold is written in policy as a fixed value and
+included in the public snapshot before any treatment data is seen (§12)
 
-ヌルコントロール（main の独立クローン A vs B、同じ K=4）は
-    ・同じ手続きで取得する
-    ・レポートで treatment と並べて提示する
-    ・「規則の妥当性の参考」であって、閾値の計算入力ではない
+The null control (independent clones A vs B of main, same K=4)
+    · is collected by the same procedure
+    · is presented alongside the treatment in the report
+    · is a "reference for the validity of the rule," not an input to computing the threshold
 ```
 
-**ヌルの結果に対する事前登録済みの処理**:
+**Pre-registered handling of the null result**:
 
-| ヌルの `FFR_gate` | 処理 |
+| Null `FFR_gate` | Handling |
 |---|---|
-| `≤ policy.null_control.maximum_ffr`（固定値。既定 1.20） | 正常。treatment の結果を提示する |
-| それを超えた | **その日の全シナリオを `INVALID_EXPERIMENT` → exit 2**。<br>閾値を緩めて通すことはしない。「この環境では分離できなかった」と報告する |
+| `≤ policy.null_control.maximum_ffr` (fixed value, default 1.20) | normal. Present the treatment result |
+| above it | **mark the whole day's scenarios `INVALID_EXPERIMENT` → exit 2**.<br>Do not loosen the threshold to pass. Report "separation was not achievable in this environment" |
 
-**統計的主張はしない**（C6）。K=4 の符号検定では片側 p の下限が 1/16 = 0.0625 であり、
-有意性は原理的に言えない。提示するのは
-**「事前に登録した規則の下で、同時に取得したヌルを上回る観測が得られた」**という事実のみ。
+**No statistical claim is made** (C6). For a K=4 sign test the lower bound on the one-sided p is 1/16 = 0.0625, so significance cannot be stated in principle. All that is presented is the fact that **"under a pre-registered rule, an observation exceeding the null collected at the same time was obtained."**
 
-### 3.9 数値の整合と境界
+### 3.9 Numeric consistency and boundaries
 
 ```yaml
-# policies/default.yaml（closed schema。未知キーは拒否）
+# policies/default.yaml (closed schema; unknown keys rejected)
 experiment:
-  runs_per_variant: 4            # = pair 数 K
+  runs_per_variant: 4            # = pair count K
   minimum_valid_pairs: 3
   minimum_ffr_pairs: 3
   max_pair_retries: 2
@@ -229,7 +222,7 @@ metrics:
   alpha: 1.0                     # > 0
   clamp_ratio: 10.0              # R >= 1
   small_sample_floor: 3
-  weights:                       # すべて > 0、総和 > 0
+  weights:                       # all > 0, sum > 0
     files_read_distinct: 1.0
     test_cycles: 1.0
     final_churn: 1.0
@@ -246,7 +239,7 @@ acceptance:
   output_limit_bytes: 1048576
 ```
 
-**cross-field 検証**（違反は起動時に拒否）:
+**Cross-field validation** (violations rejected at startup):
 
 ```
 alpha > 0
@@ -254,19 +247,17 @@ clamp_ratio >= 1
 1 < friction_threshold <= component_hard_max <= clamp_ratio
 minimum_valid_pairs <= runs_per_variant
 minimum_ffr_pairs   <= runs_per_variant
-すべての weight > 0 かつ Σ weight > 0
+every weight > 0 and Σ weight > 0
 ```
 
-**小標本**: 成分 i について `b[i,p]` と `c[i,p]` がともに `small_sample_floor` 未満の pair は、
-その成分の比を計算せず `data_quality` に記録する。全 pair でそうなった成分は gate から外す。
+**Small sample**: for component i, a pair whose `b[i,p]` and `c[i,p]` are both below `small_sample_floor` does not have its ratio computed for that component and is recorded in `data_quality`. A component for which every pair is like this is dropped from the gate.
 
-**浮動小数点の境界**: 比較は log 空間で行い、`Decimal` に変換して `epsilon` を明示的に使う。
+**Floating-point boundaries**: comparisons are done in log space, converting to `Decimal` and using `epsilon` explicitly.
 
 ```
 FRICTION_REGRESSION  ⟺  ln(FFR_gate) > ln(friction_threshold) + epsilon
 ```
 
-これにより「ちょうど閾値なら PASS」が環境をまたいで再現する。
+This makes "exactly at the threshold means PASS" reproducible across environments.
 
 ---
-

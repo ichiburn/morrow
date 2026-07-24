@@ -1,89 +1,89 @@
-# MORROW 判定・証拠検証・イベントモデル
+# MORROW Decision, Evidence Validation, and Event Model
 
-> 設計の全体像は [design.md](design.md) を参照。
+> For the overall design, see [design.md](design.md).
 
-## 4. 判定と終了コード（状態機械を 1 か所に）
+## 4. Verdicts and exit codes (state machine in one place)
 
-R3 の指摘どおり、v3 は `measure` を常に exit 0 としながら本文各所で「証拠エラーは非ゼロ」と書いており、
-**fail-open が別経路で復活していた**。v4 では状態機械を 1 つの表に集約する。
+As R3 pointed out, v3 kept `measure` always at exit 0 while stating in several places that "evidence errors are non-zero,"
+so **fail-open crept back in through a side path**. v4 consolidates the state machine into a single table.
 
-### 4.1 3 段階に分解する
+### 4.1 Split into three stages
 
 ```
 validate_evidence(raw)                     -> ValidatedExperiment | EvidenceError
-evaluate_policy(ValidatedExperiment, Policy) -> Assessment          # domain・純関数
-enforce(mode, Assessment | EvidenceError)  -> ExitResult            # domain・純関数
+evaluate_policy(ValidatedExperiment, Policy) -> Assessment          # domain, pure function
+enforce(mode, Assessment | EvidenceError)  -> ExitResult            # domain, pure function
 ```
 
-`EvidenceError` は `FrictionMetrics` の一部ではない。
-「判定は `FrictionMetrics + Policy` の純関数」という v3 の主張は、
-証拠エラー・信頼境界エラーを含められないので**分解して正確にした**。
+`EvidenceError` is not part of `FrictionMetrics`.
+v3's claim that "the verdict is a pure function of `FrictionMetrics + Policy`"
+could not accommodate evidence errors or trust-boundary errors, so we **split it apart to make it accurate**.
 
-### 4.2 状態 × モード → 終了コード（唯一の定義）
+### 4.2 State × mode → exit code (the single definition)
 
-| 状態 | 分類 | `measure` | `verify` | `gate` |
+| State | Class | `measure` | `verify` | `gate` |
 |---|---|---|---|---|
-| `EVIDENCE_INVALID` | 証拠 | **2** | **2** | **2** |
-| `EVIDENCE_INCOMPLETE` | 証拠 | **2** | **2** | **2** |
-| `CASSETTE_CORRUPTED` | 証拠 | **2** | **2** | **2** |
-| `UNTRUSTED_TARGET` | 信頼境界 | **2** | **2** | **2** |
-| `INFRASTRUCTURE_ERROR` | インフラ | **2** | **2** | **2** |
-| `INVALID_EXPERIMENT` | インフラ | **2** | **2** | **2** |
-| `INCONCLUSIVE` | 比較不能 | **2** | **2** | **2** |
-| `GATE_PRECONDITION_UNMET` | 事前条件 | — | — | **2** |
-| `REGRESSION` | 摩擦所見 | 0（advisory） | — | **1** |
-| `ADAPTATION_REGRESSION` | 摩擦所見 | 0（advisory） | — | **1** |
-| `FRICTION_REGRESSION` | 摩擦所見 | 0（advisory） | — | **1** |
-| `SINGLE_AXIS_REGRESSION` | 摩擦所見 | 0（advisory） | — | **1** |
-| `DEGRADED_DATA` | 劣化 | 0 | 0 | 0 |
-| `OK` | 正常 | 0 | 0 | 0 |
-| `EVIDENCE_REPRODUCED` | verify 専用 | — | 0 | — |
-| `EVIDENCE_STALE` | verify 専用 | — | **2** | — |
+| `EVIDENCE_INVALID` | evidence | **2** | **2** | **2** |
+| `EVIDENCE_INCOMPLETE` | evidence | **2** | **2** | **2** |
+| `CASSETTE_CORRUPTED` | evidence | **2** | **2** | **2** |
+| `UNTRUSTED_TARGET` | trust boundary | **2** | **2** | **2** |
+| `INFRASTRUCTURE_ERROR` | infrastructure | **2** | **2** | **2** |
+| `INVALID_EXPERIMENT` | infrastructure | **2** | **2** | **2** |
+| `INCONCLUSIVE` | not comparable | **2** | **2** | **2** |
+| `GATE_PRECONDITION_UNMET` | precondition | — | — | **2** |
+| `REGRESSION` | friction finding | 0 (advisory) | — | **1** |
+| `ADAPTATION_REGRESSION` | friction finding | 0 (advisory) | — | **1** |
+| `FRICTION_REGRESSION` | friction finding | 0 (advisory) | — | **1** |
+| `SINGLE_AXIS_REGRESSION` | friction finding | 0 (advisory) | — | **1** |
+| `DEGRADED_DATA` | degraded | 0 | 0 | 0 |
+| `OK` | normal | 0 | 0 | 0 |
+| `EVIDENCE_REPRODUCED` | verify only | — | 0 | — |
+| `EVIDENCE_STALE` | verify only | — | **2** | — |
 
-**規則**: 証拠・インフラ・信頼境界・比較不能のエラーは**全モードで exit 2**。
-摩擦所見のみが `measure` で advisory（0）、`gate` で block（1）になる。
-`--strict` は `DEGRADED_DATA` を 1 に格上げする。
+**Rule**: evidence, infrastructure, trust-boundary, and not-comparable errors are **exit 2 in every mode**.
+Only friction findings are advisory (0) under `measure` and block (1) under `gate`.
+`--strict` promotes `DEGRADED_DATA` to 1.
 
-`ADVISORY` は verdict ではなくモードの性質なので、状態名から削除した。
+`ADVISORY` is a property of the mode, not of the verdict, so it was removed from the state names.
 
-### 4.3 所見の集約
+### 4.3 Aggregating findings
 
-短絡するのは**証拠・信頼境界・インフラのエラーのみ**。
-摩擦所見は全部収集し、**最大重大度**で verdict を決める。
-`primary_reason` の表示順は verdict の決定とは独立に定義する。
+Only **evidence, trust-boundary, and infrastructure errors** short-circuit.
+Friction findings are all collected, and the verdict is decided by the **highest severity**.
+The display order of `primary_reason` is defined independently of how the verdict is decided.
 
-### 4.4 `gate` の事前条件
+### 4.4 Preconditions for `gate`
 
-| 事前条件 | 満たさない場合 |
+| Precondition | If unmet |
 |---|---|
-| §2 の信頼判定に全一致 | `UNTRUSTED_TARGET` |
-| ヌルコントロールが実施済みかつ許容帯内 | `INVALID_EXPERIMENT` |
+| Fully matches the trust decision in §2 | `UNTRUSTED_TARGET` |
+| Null control was run and is within the tolerance band | `INVALID_EXPERIMENT` |
 | `len(valid_pairs) >= minimum_valid_pairs` | `INFRASTRUCTURE_ERROR` |
-| 証拠検証を全通過 | `EVIDENCE_INVALID` / `EVIDENCE_INCOMPLETE` |
-| policy / pack が evaluator パス由来 | `GATE_PRECONDITION_UNMET` |
+| Passes all evidence validation | `EVIDENCE_INVALID` / `EVIDENCE_INCOMPLETE` |
+| policy / pack originate from the evaluator path | `GATE_PRECONDITION_UNMET` |
 
 ---
 
-## 5. 証拠の検証（スコープを run 単位に）
+## 5. Evidence validation (scope it to the run)
 
-R3 の指摘どおり、v3 は一意性と件数を **variant 単位**で検証すると書いていたが、
-K 回反復では `seq=0` が K 個・`SESSION_START` が K 個現れるため、**正しい証拠が必ず弾かれる**。
+As R3 pointed out, v3 stated that uniqueness and counts were validated **per variant**, but
+across K repetitions there are K instances of `seq=0` and K instances of `SESSION_START`, so **valid evidence is always rejected**.
 
-**検証の単位は `(variant, run_index)` である。**
+**The unit of validation is `(variant, run_index)`.**
 
-| 検証 | 単位 | 違反時 |
+| Check | Unit | On violation |
 |---|---|---|
-| closed JSON Schema（未知フィールド拒否） | イベント | `EVIDENCE_INVALID` |
-| `seq` が 0 始まり・欠番なし・重複なし | run | `EVIDENCE_INVALID` |
-| `tool_use_id` が一意 | run | `EVIDENCE_INVALID` |
-| 孤立 `tool_result`（対応する `tool_use` なし） | run | `EVIDENCE_INVALID` |
-| `SESSION_START` がちょうど 1 件、`COMPLETION` がちょうど 1 件 | run | `EVIDENCE_INCOMPLETE` |
-| `session_id` が manifest の当該 run の値と一致 | run | `EVIDENCE_INVALID` |
-| 未対応 `tool_use`（`success is None`）が上限以下 | run | `EVIDENCE_INCOMPLETE` |
-| manifest の `runs[]` と実ファイル集合が完全一致（過不足なし） | experiment | `EVIDENCE_INCOMPLETE` |
-| 各 pair に baseline と candidate が 1 件ずつ | experiment | `EVIDENCE_INVALID` |
+| Closed JSON Schema (reject unknown fields) | event | `EVIDENCE_INVALID` |
+| `seq` starts at 0, no gaps, no duplicates | run | `EVIDENCE_INVALID` |
+| `tool_use_id` is unique | run | `EVIDENCE_INVALID` |
+| Orphaned `tool_result` (no matching `tool_use`) | run | `EVIDENCE_INVALID` |
+| Exactly one `SESSION_START` and exactly one `COMPLETION` | run | `EVIDENCE_INCOMPLETE` |
+| `session_id` matches the value for that run in the manifest | run | `EVIDENCE_INVALID` |
+| Unpaired `tool_use` (`success is None`) at or below the cap | run | `EVIDENCE_INCOMPLETE` |
+| The manifest's `runs[]` exactly matches the actual file set (no more, no less) | experiment | `EVIDENCE_INCOMPLETE` |
+| Each pair has exactly one baseline and one candidate | experiment | `EVIDENCE_INVALID` |
 
-### 5.1 manifest の `runs[]`（閉じた配列）
+### 5.1 The manifest's `runs[]` (closed array)
 
 ```json
 "runs": [
@@ -94,32 +94,32 @@ K 回反復では `seq=0` が K 個・`SESSION_START` が K 個現れるため�
 ]
 ```
 
-`files` に列挙されていないファイルがカセットディレクトリにあれば `EVIDENCE_INCOMPLETE`。
-各パスは `resolve()` 後にカセットルート直下の通常ファイルであること、
-シンボリックリンクでないこと、正規化後に重複しないことを検証する。
+If any file in the cassette directory is not listed under `files`, the result is `EVIDENCE_INCOMPLETE`.
+Each path must be a regular file directly under the cassette root after `resolve()`,
+must not be a symlink, and must not collide with another after normalization.
 
 ---
 
-## 6. 正規化イベントモデル（本当に閉じる）
+## 6. Normalized event model (truly closed)
 
-R3 の指摘どおり、v3 の `executable` / `raw_kind` / `counters` のキー / 各種 ID はすべて自由文字列だった。
-`Mapping[str, int]` は値を整数にしただけで、任意 map の抜け道は閉じていない。
+As R3 pointed out, v3's `executable` / `raw_kind` / `counters` keys and various IDs were all free-form strings.
+`Mapping[str, int]` only makes the values integers; it does not close the escape hatch of an arbitrary map.
 
-### 6.1 公開 DTO は EventKind ごとの discriminated union
+### 6.1 The public DTO is a discriminated union per EventKind
 
 ```python
-class RawKind(StrEnum):                    # provider 由来の生文字列は保存しない
+class RawKind(StrEnum):                    # do not store the provider's raw strings
     INIT = "init"; ASSISTANT_TOOL_USE = "assistant_tool_use"
     TOOL_RESULT = "tool_result"; RESULT = "result"; OTHER = "other"
 
-class KnownExecutable(StrEnum):            # 生の実行ファイル名は保存しない
+class KnownExecutable(StrEnum):            # do not store raw executable names
     MORROW_TEST = "morrow_test"; PYTEST = "pytest"; PYTHON = "python"
     GIT = "git"; UV = "uv"; RUFF = "ruff"; MYPY = "mypy"; OTHER = "other"
 
 class EventBase(BaseModel, frozen=True, extra="forbid"):
     seq: NonNegativeInt
     run_id: RunId                          # ^r[0-9]{1,3}$
-    tool_ref: ToolRef | None               # ^t[0-9]{1,4}$  ← ★ provider の tool_use_id を再採番
+    tool_ref: ToolRef | None               # ^t[0-9]{1,4}$  <- reassigned from the provider's tool_use_id
     raw_kind: RawKind
     success: bool | None
     duration_ms: NonNegativeInt | None
@@ -133,69 +133,68 @@ class CompletionEvent(EventBase):
     kind: Literal["completion"]
     num_turns: NonNegativeInt; output_tokens: NonNegativeInt
     api_duration_ms: NonNegativeInt; cost_micro_usd: NonNegativeInt
-    stop_reason: StopReason; terminal_reason: TerminalReason   # ともに enum
+    stop_reason: StopReason; terminal_reason: TerminalReason   # both enums
     permission_denial_count: NonNegativeInt
 class SessionStartEvent(EventBase): kind: Literal["session_start"]; model: KnownModel
-class OpaqueEvent(EventBase):     kind: Literal["opaque"]      # ★ 本文も raw_kind 詳細も持たない
+class OpaqueEvent(EventBase):     kind: Literal["opaque"]      # carries neither a body nor raw_kind detail
 
 AgentEvent = Annotated[Union[...], Field(discriminator="kind")]
 ```
 
-**要点**:
+**Key points**:
 
-* `path_ref` / `tool_ref` は **experiment 内で採番した opaque ID**。
-  実パスとの対応表は evaluator 側にのみ置き、**公開しない**。
-  → パスのハッシュに対する辞書攻撃（`src/auth.py` の存在推測）も同時に塞げる
-* `executable` は **enum**。未知は `OTHER`。シークレットをファイル名にした実行ファイルは通らない
-* 自由 map は存在しない。すべて型付きフィールド
-* `OpaqueEvent` は件数だけを持つ。`raw_kind` も粗い enum に丸める
-* 金額は `cost_micro_usd`（整数）。浮動小数点を正規化イベントに入れない
+* `path_ref` / `tool_ref` are **opaque IDs assigned within the experiment**.
+  The mapping to real paths lives only on the evaluator side and is **not published**.
+  -> This also blocks dictionary attacks against path hashes (inferring the existence of `src/auth.py`)
+* `executable` is an **enum**; unknown values become `OTHER`. An executable whose name encodes a secret does not get through
+* No free-form maps exist; every field is typed
+* `OpaqueEvent` carries only a count. Even `raw_kind` is rounded down to a coarse enum
+* Amounts are `cost_micro_usd` (integer). No floating point enters the normalized events
 
-### 6.2 tool_use ↔ tool_result の対応付けと順序
-
-```
-正規順序キー = (source_line_index, content_index)
-seq          = 上記キーで昇順ソートしたときの 0 始まりの通し番号
-
-1. assistant の tool_use を pending に入れる（tool_ref を採番）
-2. 対応する tool_result で success を確定し、確定後に一度だけ emit
-3. 終端で残った pending は success = None で emit し、unpaired を加算
-4. 全イベントを seq 昇順に並べて書き出す
-```
-
-`timestamp` は正規化イベントに**含めない**。provider が出さない場合の合成値が決定性を壊すため。
-時刻情報は manifest の run 単位（開始・終了）にのみ持つ。順序は常に `seq` で決まる。
-
-### 6.3 正規化 JSON のバイト決定性
-
-* キーは辞書順（RFC 8785 相当）。**golden byte fixture でバイト列を固定する**
-* 数値は整数のみ。浮動小数点を含めない
-* 行区切りは LF、末尾に改行 1 つ
-* 非 ASCII は現れない（すべて enum と opaque ID のため）
-
-### 6.4 テスト実行の一次ソース（推測をやめる）
-
-シェル文字列のパースは P0 の品質では成立しない。**入口を 1 本に固定する。**
+### 6.2 Pairing and ordering of tool_use <-> tool_result
 
 ```
-evaluator が worktree に配置: ./morrow-test
-    実体は future-pack の acceptance argv を実行し、
-    <state_root>/launcher-log/<run_id>.jsonl に
-    {launcher_seq, exit_code, duration_ms} を追記する
+canonical order key = (source_line_index, content_index)
+seq                 = 0-based running number when sorted ascending by the key above
 
-プロンプトで明示: 「テストは ./morrow-test で実行してください」
-
-test_cycles = ランチャログの行数        ← イベント推定ではなく一次記録
+1. Put the assistant's tool_use into pending (assign a tool_ref)
+2. Confirm success on the matching tool_result, and emit exactly once after confirmation
+3. Any pending left at the end is emitted with success = None, and unpaired is incremented
+4. Sort all events ascending by seq and write them out
 ```
 
-エージェントが `./morrow-test` を使わずに直接テストを叩いた場合:
+`timestamp` is **not included** in the normalized events, because a synthesized value used when the provider omits it would break determinism.
+Time information is held only per run in the manifest (start and end). Order is always decided by `seq`.
 
-* `executable` が `PYTEST` / `PYTHON` の `CommandEvent` を検出したら、
-  **`data_quality.direct_test_invocations` を加算する**
-* この件数が `policy.metrics.max_direct_test_invocations`（既定 0）を超えたら
-  **`EVIDENCE_INCOMPLETE` → exit 2**。黙って過小カウントにしない
+### 6.3 Byte-level determinism of the normalized JSON
 
-シェル文法の汎用パースは P1。
+* Keys are in lexicographic order (equivalent to RFC 8785). **A golden byte fixture pins the byte sequence.**
+* Numbers are integers only; no floating point
+* Line separator is LF, with a single trailing newline
+* No non-ASCII appears (everything is enums and opaque IDs)
+
+### 6.4 Primary source for test runs (stop guessing)
+
+Parsing shell strings is not viable at P0 quality. **Fix the entry point to a single path.**
+
+```
+The evaluator places ./morrow-test in the worktree:
+    it runs the acceptance argv of the future-pack and
+    appends {launcher_seq, exit_code, duration_ms} to
+    <state_root>/launcher-log/<run_id>.jsonl
+
+The prompt states explicitly: "Run tests with ./morrow-test."
+
+test_cycles = number of lines in the launcher log   <- a primary record, not inferred from events
+```
+
+If the agent bypasses `./morrow-test` and invokes tests directly:
+
+* When a `CommandEvent` with `executable` of `PYTEST` / `PYTHON` is detected,
+  **increment `data_quality.direct_test_invocations`**
+* If this count exceeds `policy.metrics.max_direct_test_invocations` (default 0),
+  the result is **`EVIDENCE_INCOMPLETE` -> exit 2**. Do not silently undercount
+
+General-purpose parsing of shell grammar is P1.
 
 ---
-
