@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.coverage
+htmlcov/
+
+# シークレット
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+auth.json
+
+# MORROW: 実験の実行時状態（evaluator ドメイン。公開しない）
+.morrow/
+out/
+
+# MORROW: 設計の反復履歴（ローカルの作業記録。公開リポジトリには含めない）
+docs/_history/
+
+# ローカル開発ハーネス（claude-code-template 由来。MORROW の成果物ではない）
+prompts/
+templates/
+crates/
+scripts/
+memory/
+.agents/
+.codex/
+.gemini/
+.claude/
+.mcp.json
+.gitmodules
+AGENTS.md.template
+GEMINI.md
+docs/analysis-cache/
+docs/handoff/
+docs/plans/
+docs/tasks/
+docs/infra/
+docs/development/
+docs/testing/
+
+# エディタ・OS
+.DS_Store
+.idea
+.vscode
+
+# ローカル環境のシェル設定（開発ホスト固有。成果物ではない）
+.bash_profile
+.bashrc
+.profile
+.zprofile
+.zshrc
+.gitconfig
+.ripgreprc
+.ai-results/
+.needs-init
+.auto-init-result.json
+.dep-check-result.json
+.trash/
