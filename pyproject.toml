@@ -38,6 +38,11 @@ packages = ["src/morrow"]
 line-length = 100
 target-version = "py312"
 src = ["src", "tests"]
+# The demo snapshots are the *subject* of the measurement, not MORROW's own code.
+# They are standalone projects with their own configuration, and one of them is
+# deliberately written the way a real "performance refactor" would be. Linting them
+# here would be linting the experiment.
+extend-exclude = ["demo/snapshots"]
 
 [tool.ruff.lint]
 select = [
