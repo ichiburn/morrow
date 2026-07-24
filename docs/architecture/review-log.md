@@ -1,79 +1,84 @@
-# 設計レビュー記録
+# Design Review Log
 
-MORROW の設計は、実装に入る前に **敵対的レビューを 3 ラウンド**通した。
-レビュアは OpenAI Codex（`codex exec --sandbox read-only`）。
-各ラウンドは「欠陥だけを挙げよ。褒め言葉と要約は不要」という指示で実行した。
+Before implementation began, the MORROW design went through **three rounds of
+adversarial review**. The reviewer was OpenAI Codex (`codex exec --sandbox
+read-only`). Each round ran under the instruction "list only the defects; no
+praise, no summary."
 
-| ラウンド | 対象 | MUST_FIX | SHOULD_FIX | 結果 |
+| Round | Target | MUST_FIX | SHOULD_FIX | Outcome |
 |---|---|---:|---:|---|
-| R1 | 設計 v2.0 | 15 | 5 | 全件を v2.1 に反映 |
-| R2-a | 設計 v2.1 | 19 | 9 | **設計方針そのものを変更**（v3） |
-| R2-b | 設計 v2.1（独立実行） | 16 | 9 | R2-a に無い 5 件を追加反映 |
-| R3 | 設計 v3 | 16 | 5 | **主張の強度を証拠に一致させる**（v4） |
+| R1 | design v2.0 | 15 | 5 | All applied in v2.1 |
+| R2-a | design v2.1 | 19 | 9 | **Changed the design approach itself** (v3) |
+| R2-b | design v2.1 (independent run) | 16 | 9 | 5 findings not in R2-a additionally applied |
+| R3 | design v3 | 16 | 5 | **Matched claim strength to the evidence** (v4) |
 
-R2 は同じ文書に対して独立に 2 本走らせた。指摘の大半は一致したが、
-片方だけが見つけた欠陥が 5 件あった。
+R2 ran twice independently against the same document. Most findings coincided,
+but 5 defects were found by only one of the two runs.
 
 ---
 
-## 各ラウンドで何が変わったか
+## What changed in each round
 
 ### R1 → v2.1
 
-初版は測定モデルの穴が中心だった。
+The first version's issues centered on holes in the measurement model.
 
-- 幾何平均の分母が 0 や 1 で発散する → 平滑化とクランプを導入
-- `duration` を摩擦比に入れていた → API レイテンシはノイズなので除外
-- 秘匿化がコマンド文字列に限定されていた → 射影の境界を一本化
-- `--max-turns` に依存していた → **実在しないフラグだった**
+- The geometric mean's denominator diverged at 0 or 1 → introduced smoothing and clamping
+- `duration` was included in the friction ratio → API latency is noise, so it was excluded
+- Concealment was limited to the command string → unified the projection boundary
+- We depended on `--max-turns` → **it was a flag that does not exist**
 
-### R2 → v3（設計方針の変更）
+### R2 → v3 (change of design approach)
 
-19 件の指摘は、個別の欠陥ではなく**一つの構造的無理**から派生していた。
+The 19 findings were not individual defects; they all derived from **a single
+structural impossibility**.
 
-> 「未信頼の PR を、非決定的なエージェントの 1 回の実行で測り、その結果で PR を止める」
+> "Measure an untrusted PR with a single run of a non-deterministic agent, and
+> block the PR on that result."
 
-これは実装できない。派生していた問題:
+This cannot be built. The problems it produced:
 
-- 固定カセットの再生では現在の PR を評価していない
-- fork PR の評価では未信頼コードが実行される
-- PR 自身がポリシーとテストを書き換えれば自己採点できる
-- `INVALID_RUN` と `BASELINE_FAILED` が exit 0 で、評価器の障害が緑になる
+- Replaying a fixed cassette does not evaluate the current PR
+- Evaluating a fork PR runs untrusted code
+- If the PR itself rewrites the policy and tests, it can grade itself
+- `INVALID_RUN` and `BASELINE_FAILED` exited 0, so an evaluator failure turned green
 
-→ **evaluator ドメインと measured ドメインを分離**し、
-replay を「証拠から判定が再現するかの検証器」に再定義し、
-主張の範囲を「信頼済みリポジトリ向けの opt-in ゲート」に縮小した。
+→ We **separated the evaluator domain from the measured domain**, redefined
+replay as "a verifier of whether the decision reproduces from the evidence," and
+narrowed the scope of the claim to "an opt-in gate for trusted repositories."
 
-### R3 → v4（主張の強度を証拠に一致させる）
+### R3 → v4 (match claim strength to the evidence)
 
-16 件は「仕様のバグ」と「どう実装しても支えられない主張」に分かれた。
+The 16 findings split into "specification bugs" and "claims that no
+implementation could support."
 
-**仕様のバグ**（全件修正）:
+**Specification bugs** (all fixed):
 
-- pre スナップショットを `(サイズ, ハッシュ)` で持っていたが、**そこから行差分は復元できない**
-- variant ごとに中央値を取ってから比を計算しており、**対反復の意味が失われていた**
-- `measure` モードが常に exit 0 で、R2 で塞いだ fail-open が別経路で復活していた
-- 反復数と最小 pair 数の設定により、`ADAPTATION_REGRESSION` が到達不能だった
-- スキーマ検証を variant 単位にすると、K 回反復した正しい証拠が必ず弾かれる
-- 受入テストと回帰テストを同じ場所に置いていた（受入は実行前に落ちるのが正常）
-- エージェントが venv にパッケージを入れて受入を通せた（実測で `pip install` を観測済み）
+- The pre snapshot was held as `(size, hash)`, but **a line-level diff cannot be reconstructed from that**
+- We took the median per variant before computing the ratio, which **lost the meaning of the paired run**
+- `measure` mode always exited 0, so the fail-open closed in R2 had revived on a different path
+- The repetition count and minimum-pair setting made `ADAPTATION_REGRESSION` unreachable
+- Making schema validation per-variant necessarily rejects correct evidence repeated K times
+- Acceptance tests and regression tests were placed in the same location (acceptance is expected to fail before execution)
+- The agent could install packages into the venv and pass acceptance (a `pip install` was observed empirically)
 
-**支えられない主張**（取り下げ）:
+**Unsupportable claims** (withdrawn):
 
-| 主張 | なぜ支えられないか |
+| Claim | Why it is unsupportable |
 |---|---|
-| 「差をノイズと区別できる」 | K=4 の符号検定でも片側 p の下限は 1/16 = 0.0625 |
-| 「閾値はヌルコントロールから導出するので恣意的でない」 | 安全率自体が無根拠。ヌルを同じ規則で判定すれば自動的に通る（循環） |
-| 「evaluator の資材にエージェントは到達できない」 | 同一 UID で動くため到達できる |
-| 「事前登録を第三者が検証できる」 | タグの日時は指定でき、タグは移動・削除できる |
-| 「公開物に自由文字列を一切書かない」 | 実行ファイル名も識別子も文字列だった |
+| "We can distinguish the difference from noise" | Even a K=4 sign test has a one-sided p lower bound of 1/16 = 0.0625 |
+| "The threshold is not arbitrary because it is derived from the null control" | The safety margin itself is ungrounded. Judging the null by the same rule passes it automatically (circular) |
+| "The agent cannot reach the evaluator's artifacts" | It runs under the same UID, so it can |
+| "A third party can verify the pre-registration" | A tag's timestamp can be set, and tags can be moved or deleted |
+| "The published artifacts contain no free strings" | The executable names and identifiers were strings too |
 
-→ 主張を取り下げ、代わりに
-**「何を主張し、何を主張しないか」を根拠の強度つきで表にした**（`design.md` §0.1）。
+→ We withdrew the claims and instead **tabulated "what we claim and what we do
+not claim" with the strength of the grounds** (`design.md` §0.1).
 
 ---
 
-## この記録を残す理由
+## Why we keep this record
 
-MORROW は「測定器」を名乗る。測定器は、測定範囲と測定できない範囲を明示できなければ信用されない。
-設計段階で何を諦めたかを残すことは、その一部である。
+MORROW calls itself an "instrument." An instrument is not trusted unless it can
+state its measurement range and the range it cannot measure. Keeping a record of
+what we gave up at the design stage is part of that.

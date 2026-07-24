@@ -1,115 +1,135 @@
 # MORROW
 
 **Future Friction Gate for AI-native CI/CD**
-将来変更摩擦を実測する CI ゲート
 
-> このプルリクエストは、すべてのテストに通る。
-> だが、次の変更を難しくしていないか？
+> This pull request passes every test.
+> But does it make the next change harder?
 
 ---
 
-## これは何か
+## What this is
 
-MORROW は、**AI コーディングエージェントを測定器として使う**。
+MORROW uses an **AI coding agent as a measuring instrument**.
 
-事前に登録した「未来の変更タスク」を、`main` と候補 PR の**両方**に対して、
-同一のモデル・プロンプト・制約の下で複数回実行する。
-そしてエージェントの作業軌跡 — 読んだファイル数、テストの試行回数、実際に書き換えた行数 —
-を OpenTelemetry で SigNoz に送り、**両者の差**を計算する。
+A future change task is registered in advance. MORROW then runs that same task against
+**both** `main` and the candidate pull request, under identical model, prompt, and resource
+constraints, repeated as four paired runs. The agent's work trajectory — how many distinct
+files it had to read, how many test cycles it burned, how many lines it actually changed —
+is exported to SigNoz over OpenTelemetry, and the **difference between the two sides** is
+computed.
 
-既存の CI ゲートが答えるのは「今のコードは動くか」である。
-MORROW が答えるのは **「このコードベースは、次の変更をまだ効率よく吸収できるか」** である。
+Existing CI gates answer "does the code work now."
+MORROW answers **"can this codebase still absorb the next change efficiently."**
 
-| 既存のゲート | 問い |
+| Existing gate | Question |
 |---|---|
-| ユニットテスト | 今のロジックは動くか |
-| 統合テスト | 今のコンポーネントは噛み合うか |
-| セキュリティスキャン | 既知の脆弱性はないか |
-| **MORROW** | **次の変更をまだ効率よく吸収できるか** |
+| Unit tests | Does the current logic work? |
+| Integration tests | Do the current components fit together? |
+| Security scan | Is a known vulnerability present? |
+| **MORROW** | **Can the next change still be absorbed efficiently?** |
 
 ---
 
-## 主張すること / しないこと
+## What MORROW claims, and what it does not
 
-測定器は、測定範囲**と測定できない範囲**を明示できなければ信用されない。
+An instrument is not trustworthy unless it states both its measurement range **and the range
+it cannot measure**. This table is the contract.
 
-### 主張すること
+### Claimed
 
-| # | 主張 | 根拠 | 強度 |
+| # | Claim | Basis | Strength |
 |---|---|---|---|
-| C1 | 同一の未来タスクを 2 つのリポジトリ状態に同一条件で実行し、作業量の差を**再現可能に**抽出できる | 記録された証拠から `morrow verify` が判定を再導出する | **強い**（機械的に検証可能） |
-| C2 | この構成では、結合を導入した候補のほうが、より多くのファイル読取・試行・変更行を要した | 実測値と全 pair の生データを提示 | **中**（この環境・このタスク・このモデルでの観測） |
-| C3 | 観測された差は、同時に取得したヌルコントロールの範囲を上回った | ヌルと treatment を同一手続きで取得 | **中**（有意性ではなく比較） |
-| C4 | 判定は決定論的で、証拠から再現できる | `verify` が CI で毎回走る | **強い** |
+| C1 | The difference in work required for the same future task, across two repository states under identical conditions, can be extracted **reproducibly** | `morrow verify` re-derives the verdict from the recorded evidence | **Strong** — mechanically checkable |
+| C2 | For a given experiment, MORROW reports the observed per-component difference between baseline and candidate, without selection | All paired-run ratios are published, not just the median | **Strong** — a capability claim, not a result claim |
+| C3 | Any observed difference is reported alongside a null control acquired in the same recording session | Null and treatment run through an identical procedure | **Medium** — a comparison, not a significance test |
+| C4 | The decision is deterministic and reproducible from the evidence | `verify` runs in CI on every push | **Strong** |
 
-### 主張しないこと
+**C2 and C3 are claims about the procedure, not about the outcome.** Whether the coupled
+candidate actually turns out to cost more is a *result*, and results are reported as measured
+— including when they contradict the registered hypothesis.
 
-| # | 主張しないこと | 理由 |
+### Not claimed
+
+| # | Not claimed | Why |
 |---|---|---|
-| C5 | 未信頼リポジトリでも安全に実行できる | OS レベルの隔離を実装していない。**信頼済みリポジトリでのみ実行する** |
-| C6 | 統計的に有意な差である | 4 対反復の符号検定では片側 p の下限が 1/16 = 0.0625。**原理的に言えない** |
-| C7 | 証拠は改竄に耐える | 署名も provenance も無い。ハッシュは**偶発破損の検知**である |
-| C8 | 指標は敵対的なエージェントに対して頑健である | 固定 provider / model / prompt 下の代理指標である |
+| C5 | Safe execution against untrusted repositories | No OS-level isolation is implemented. **MORROW runs only against trusted repositories.** |
+| C6 | Statistical significance | With four paired runs, the lower bound on a one-sided sign test is 1/16 = 0.0625. This **cannot** be claimed |
+| C7 | Tamper resistance of the evidence | There is no signing and no provenance. The hashes detect **accidental corruption**, nothing more |
+| C8 | Robustness against an adversarial agent | These are proxy metrics valid under a fixed provider, model, and prompt |
 
 ---
 
-## 測定するもの
+## What is measured
 
-事前に登録した 3 成分を、**対反復（pair）ごとに**比較する。
+Three components, compared **per paired run**.
 
-| 成分 | 何を測るか | 一次ソース |
+| Component | What it stands for | Primary source |
 |---|---|---|
-| `files_read_distinct` | 理解しなければならない範囲 | エージェントのツール呼び出し |
-| `test_cycles` | 試行錯誤の回数 | 固定テストランチャの実行記録 |
-| `final_churn` | 実装の物理量 | 実行前ツリーとの実ファイル差分 |
+| `files_read_distinct` | How much of the codebase had to be understood | Agent tool calls |
+| `test_cycles` | How much trial and error was required | A fixed test launcher's execution log |
+| `final_churn` | The physical volume of the implementation | Real file diff against the pre-run tree |
 
 ```
-pair p について:   r[i,p] = clamp( (candidate[i,p] + α) / (baseline[i,p] + α),  1/R,  R )
-成分 i について:   r[i]   = median_p( r[i,p] )
-                  FFR    = exp( Σ wᵢ · ln( max(1, r[i]) ) / Σ wᵢ )
+per pair p:      r[i,p] = clamp( (candidate[i,p] + α) / (baseline[i,p] + α),  1/R,  R )
+per component i: r[i]   = median_p( r[i,p] )
+                 FFR    = exp( Σ wᵢ · ln( max(1, r[i]) ) / Σ wᵢ )
 ```
 
-**改善方向は 1 に丸める（片側集約）。** 両側の幾何平均だと、一軸の 10 倍悪化が
-別軸の 0.1 倍改善で打ち消されて素通りしてしまうためである。摩擦は相互に代替可能な量ではない。
+**Improvements are floored at 1 (one-sided aggregation).** A two-sided geometric mean lets a
+10× regression on one axis be cancelled by a 0.1× improvement on another, and slip through.
+Friction is not a fungible quantity.
 
-**レポートには `r[i,p]` を全部出す。** 中央値だけを見せない。
-
----
-
-## ヌルコントロール
-
-**同一ツリーの独立クローン同士**（差分ゼロ）を、treatment とまったく同じ手続きで実行する。
-
-観測される差は純粋な run 間ばらつきであり、これが**測定の床**になる。
-ヌルが事前に登録した許容帯を超えた場合、その日の実験は**全部無効**として報告する。
-閾値を緩めて通すことはしない。
-
-閾値そのものは treatment のデータを見る前に公開スナップショットへ含める。
-**ヌルから計算はしない**（ヌル自身が同じ規則で自動的に通ってしまい、循環するため）。
+**Every `r[i,p]` appears in the report.** The median alone is not shown.
 
 ---
 
-## 設計
+## The null control
 
-* [設計書](docs/architecture/design.md) — 実装の基準線
-* [レビュー記録](docs/architecture/review-log.md) — 実装前に敵対的レビューを 3 ラウンド通した記録
+Two independent clones of the *same* tree — zero difference between them — are run through
+exactly the same procedure as the treatment, in the same recording session.
+
+Whatever difference shows up there is pure run-to-run variance. That is the **noise floor of
+the measurement**.
+
+If the null control exceeds its published tolerance, the entire day's experiment is reported
+as invalid. The threshold is not loosened to make the result pass.
+
+The threshold itself is fixed in the published evaluator snapshot **before** any treatment data
+is collected. It is **not** computed from the null control — doing so would let the null pass
+itself under its own rule, which is circular.
 
 ---
 
-## AI 利用の申告
+## Design
 
-本プロジェクトは以下の AI ツールを使用して開発している。
-
-| ツール | 用途 |
+| Document | Contents |
 |---|---|
-| Anthropic Claude Code | 実装、SigNoz / OpenTelemetry 連携、テスト、ドキュメント |
-| OpenAI Codex | 設計の敵対的レビュー（3 ラウンド）、コードレビュー |
-| ChatGPT | 製品アーキテクチャ、計画、文書作成 |
+| [design.md](docs/architecture/design.md) | Claims and their basis, measured constraints |
+| [measurement.md](docs/architecture/measurement.md) | Trust boundary, paired runs, components, churn, null control |
+| [evidence.md](docs/architecture/evidence.md) | Decision state machine, evidence validation, event model |
+| [operations.md](docs/architecture/operations.md) | Execution and isolation, scope, demo, critical path |
+| [review-log.md](docs/architecture/review-log.md) | Four rounds of adversarial review, run before implementation began |
 
-生成されたすべての変更は作成者が確認・検証している。
+The review log is worth reading. Five claims were **withdrawn** during design review because
+no implementation could have supported them.
 
 ---
 
-## ステータス
+## AI disclosure
 
-**開発中**（Agents of SigNoz hackathon, 2026-07-20 〜 07-26 / Track 01: AI & Agent Observability）
+This project is built with the following AI tools.
+
+| Tool | Use |
+|---|---|
+| Anthropic Claude Code | Implementation, SigNoz / OpenTelemetry integration, testing, documentation |
+| OpenAI Codex | Adversarial design review (four rounds), code review |
+| ChatGPT | Product architecture, planning, document preparation |
+
+Every generated change is reviewed and validated by the author.
+
+---
+
+## Status
+
+**In development.**
+Agents of SigNoz hackathon, 2026-07-20 – 07-26 · Track 01: AI & Agent Observability
