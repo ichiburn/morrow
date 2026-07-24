@@ -15,7 +15,7 @@ The 16 MUST_FIX items from R3 fell into two groups.
 
 | Group B claim | Why it can't be supported | v4 treatment |
 |---|---|---|
-| "The difference is distinguishable from noise" | A sign test at K=3 has a **one-sided p floor of 1/8 = 0.125**; even K=4 gives 1/16 = 0.0625 | **Claim no statistical significance.** Present the observation that, under a pre-registered rule, the result exceeded a null control collected concurrently |
+| "The difference is distinguishable from noise" | A sign test at K=3 has a **one-sided p floor of 1/8 = 0.125**; even K=4 gives 1/16 = 0.0625 | **Claim no statistical significance.** Present the observation that, under a rule fixed in the published evaluator snapshot, the result exceeded a null control collected concurrently |
 | "The threshold isn't arbitrary because it's derived from the null" | `floor=1.30` / `safety_factor=1.30` / `maximum_ffr=1.20` are themselves ungrounded. Judging the null by `FFR_null×1.30` passes it automatically (**circular**) | **Drop the "derivation."** The threshold is a decision rule registered before the treatment data is seen; the null sits alongside it on the same screen, leaving the reader to judge |
 | "The agent cannot reach the evaluator domain" | Same UID, under the same `experiment_root`. Directly contradicts §7.2's "can reach the parent directory" | **Withdraw the trust-boundary claim.** Keeping assets outside the worktree is accident prevention; it does not stop an adversarial agent, and this is stated plainly |
 | "A third party can verify the pre-registration" | A tag's timestamp can be set, and tags can be moved or deleted | **Do not use the term "pre-registration."** Call it a "published snapshot of evaluation assets" and state the limitation |

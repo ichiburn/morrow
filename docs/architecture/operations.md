@@ -20,7 +20,7 @@
 | Budget cap | `--max-budget-usd` |
 | Wall-clock cap | `asyncio.wait_for` |
 | Config isolation | Clone `agent-home` per run to prevent session/cache leakage |
-| Run order | Equal numbers of AB and BA, pre-registered in plan.json |
+| Run order | Equal numbers of AB and BA, fixed in the published evaluator snapshot (plan.json) |
 | Concurrency | **1 (sequential)**. Running in parallel lets resource contention leak into the treatment difference |
 | Variant concealment | **Strip `baseline` / `candidate` from cwd names, prompts, and environment variables.**<br>Use only equal-length opaque `run_id`s; the evaluator holds the mapping |
 
@@ -50,9 +50,9 @@ Following the R3 findings, we **reduce rather than add features**.
 | provider | Claude Code only |
 | future task | 1 |
 | scenarios | 2: `null` and `coupling` |
-| repetitions | K=4 pairs × 2 scenarios = **16 runs** |
+| repetitions | K=4 pairs × 2 scenarios = **16 runs nominal** (up to **48** with retries) |
 | components | **3** (`files_read_distinct` / `test_cycles` / `final_churn`) |
-| modes | `measure` / `verify` / `gate` (`gate` is a thin layer that applies rules to an already-recorded report) |
+| modes | `measure` / `verify` / `gate` (`gate` **recomputes evidence validation, metrics, and the verdict from the cassette**; the recorded report is not an input — §4.6) |
 | decision | the state machine in §4.2 |
 | observability | OTel → SigNoz, 2 trajectories + 1 dashboard screen (manual import allowed) |
 | output | `morrow-report.md` / `morrow-report.json` |
@@ -70,14 +70,14 @@ provenance / demo-repo automation
 
 | | 1 run | P0 total |
 |---|---|---|
-| Cost | $0.16–0.59 (measured) | **$3–10** for 16 runs |
-| Duration | 3–8 min | **50–130 min sequential** (never parallel) |
+| Cost | $0.16–0.59 (measured) | **$3–10** for 16 runs nominal, up to **~$8–28** at the maximum 48 runs |
+| Duration | 3–8 min | **50–130 min sequential** for 16 runs, up to **~6.5 h** at 48 (never parallel) |
 
 ---
 
 ## 9. Demo design
 
-| ID | baseline | candidate | Pre-registered hypothesis |
+| ID | baseline | candidate | Hypothesis fixed in the published evaluator snapshot |
 |---|---|---|---|
 | `null` | independent clone A of `main` | independent clone B of `main` | `FFR_gate ≤ 1.20` |
 | `coupling` | `main` | `pr/1` (domain imports Redis directly) | `FFR_gate > 1.50` |
@@ -232,7 +232,7 @@ Tests we must write:
 | **G1** | 2026-07-25 09:30 JST | **Bring up SigNoz with `foundryctl`, smoke trace, commit `casting.yaml(.lock)`** | **Human (host)** |
 | **G2** | 2026-07-25 14:00 JST | normalize → validate → friction → decide → report. The required tests in §13 are green | Claude + subagents |
 | **G3** | 2026-07-25 16:00 JST | demo repo (`main` / `pr/1`), current tests green on both, **push the evaluator artifacts** | subagent |
-| **G4** | 2026-07-25 21:00 JST | **Record 16 runs sequentially** (null 8 + coupling 8). Apply the pre-registered rules and record without cherry-picking | Claude |
+| **G4** | 2026-07-25 21:00 JST | **Record 16 runs sequentially** (null 8 + coupling 8). Apply the rules fixed in the published evaluator snapshot and record without cherry-picking | Claude |
 | **G5** | 2026-07-25 23:30 JST | trajectories visible in OTel → SigNoz, dashboard, `morrow verify` green | Claude |
 | **G6** | 2026-07-26 02:00 JST | GitHub push, CI green, checks visible on the demo PR | Claude |
 | **G7** | 2026-07-26 05:00 JST | **code freeze**. README / diagrams / screenshots | Claude + human |

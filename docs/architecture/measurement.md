@@ -71,6 +71,9 @@ How much the four ratios scatter is information the reader should judge for them
 | Valid pairs < `policy.experiment.minimum_valid_pairs` (default 3) | `INFRASTRUCTURE_ERROR` → **exit 2** |
 
 An agent hitting its time limit or exceeding its budget is not an infra failure; it counts as **`success = 0`** (a valid observation).
+The manifest records each run's `terminal_status` (`completed` / `timeout` / `budget_exceeded` / `crashed`); only a `completed` run is required to carry a provider `COMPLETION` event (§5, §5.1).
+
+Every attempt is retained: the manifest keys each run by `(pair_id, variant, attempt_index)` (0-based) and flags the adopted attempt with `adopted: true` (§5.1). Nominal recording is 16 runs; with the maximum retries it can reach 48.
 
 ### 3.3 Components (making them genuinely mutually exclusive)
 
@@ -93,12 +96,18 @@ R3's point is correct in information-theoretic terms: **a `(size, sha256)` pair 
 
 ```
 ① create worktree
-② pre snapshot:  copy the worktree content into <state_root>/snapshots/<run_id>.pre/
-③ run the agent
-④ confirm the agent's process group has died
-⑤ post snapshot: tree walk the worktree
-⑥ final_churn = actual file diff between the pre tree and the post tree
-⑦ run acceptance and regression tests (★ after churn is finalized; their artifacts are not counted)
+② place the fixed-bytes ./morrow-test launcher (before the pre snapshot; §6.4)
+③ pre snapshot:  walk the worktree with the same lstat-based walker used at post (§3.4.1)
+                 and copy each regular file's content into <state_root>/snapshots/<run_id>.pre/.
+                 Symlinks are never dereferenced
+④ run the agent
+⑤ confirm the agent's process group has died
+⑥ post snapshot: walk the worktree with the same lstat-based walker
+⑦ final_churn = actual file diff between the pre tree and the post tree
+⑧ run acceptance and regression tests (★ after churn is finalized; their artifacts are not counted)
+
+The launcher's digest is verified to be identical at the pre and the post snapshot;
+if it changed, the run is INVALID_RUN.
 ```
 
 The demo repository is small (a few hundred KB), so the cost of a full content copy is negligible.
@@ -116,12 +125,14 @@ Excluded: the fixed allowlist in policy.metrics.churn_exclude
 
 | Target | Handling |
 |---|---|
-| symlink | **not followed** (`lstat`). Only the length of the link target string is recorded; its contents are not read |
+| symlink | detected via `lstat`; **never dereferenced**. In P0 a symlink marks the run `INVALID_RUN` (recording only the link-target length cannot distinguish two different targets of equal length) |
 | FIFO / socket / device / hard-link fan-out | if detected, mark that run `INVALID_RUN` |
 | binary (undecodable as UTF-8) | not mixed into line counts. **Tallied separately as `binary_bytes_changed`** and not used by the gate |
 | file count / total bytes / single-file size | if any exceeds the policy limit, `INVALID_RUN` |
 | change during the walk | if the mtime set differs before and after the walk, `INVALID_RUN` |
 | walk order | fixed to ascending byte order of the relative path (determinism) |
+
+`INVALID_RUN` is a **run-level internal state**, not one of the mode exit codes in §4.2. It invalidates the whole pair (§3.2); the pair is retried up to `policy.experiment.max_pair_retries`, and if valid pairs remain below `minimum_valid_pairs` after retries the experiment resolves to `INFRASTRUCTURE_ERROR` (exit 2).
 
 The v3 idea of converting binary to a line count via `bytes/80` is withdrawn: the unit is meaningless, and an image or lockfile change alone would spike the metric.
 
@@ -180,8 +191,8 @@ FFR computation     : made over successful_pairs only
 | Condition | Finding |
 |---|---|
 | `len(valid_pairs) < minimum_valid_pairs` | `INFRASTRUCTURE_ERROR` |
-| baseline success count == 0 | `INCONCLUSIVE` (the control did not hold) |
-| baseline success count ≥ threshold and candidate success count == 0 | `ADAPTATION_REGRESSION` |
+| baseline success count < `minimum_baseline_successes` | `INCONCLUSIVE` (baseline not established) |
+| baseline success count ≥ `minimum_baseline_successes` and candidate success count == 0 | `ADAPTATION_REGRESSION` |
 | `len(successful_pairs) < minimum_ffr_pairs` (default 3) | do not report FFR. `INCONCLUSIVE` |
 | `FFR_gate > policy.decision.friction_threshold` | `FRICTION_REGRESSION` |
 | any `r[i] > policy.decision.component_hard_max` | `SINGLE_AXIS_REGRESSION` |
@@ -200,14 +211,14 @@ The null control (independent clones A vs B of main, same K=4)
     · is a "reference for the validity of the rule," not an input to computing the threshold
 ```
 
-**Pre-registered handling of the null result**:
+**Handling of the null result (fixed in the published evaluator snapshot)**:
 
 | Null `FFR_gate` | Handling |
 |---|---|
 | `≤ policy.null_control.maximum_ffr` (fixed value, default 1.20) | normal. Present the treatment result |
 | above it | **mark the whole day's scenarios `INVALID_EXPERIMENT` → exit 2**.<br>Do not loosen the threshold to pass. Report "separation was not achievable in this environment" |
 
-**No statistical claim is made** (C6). For a K=4 sign test the lower bound on the one-sided p is 1/16 = 0.0625, so significance cannot be stated in principle. All that is presented is the fact that **"under a pre-registered rule, an observation exceeding the null collected at the same time was obtained."**
+**No statistical claim is made** (C6). For a K=4 sign test the lower bound on the one-sided p is 1/16 = 0.0625, so significance cannot be stated in principle. All that is presented is the fact that **"under a rule fixed in the published evaluator snapshot, an observation exceeding the null collected at the same time was obtained."**
 
 ### 3.9 Numeric consistency and boundaries
 
@@ -217,6 +228,7 @@ experiment:
   runs_per_variant: 4            # = pair count K
   minimum_valid_pairs: 3
   minimum_ffr_pairs: 3
+  minimum_baseline_successes: 2
   max_pair_retries: 2
 metrics:
   alpha: 1.0                     # > 0
@@ -247,10 +259,13 @@ clamp_ratio >= 1
 1 < friction_threshold <= component_hard_max <= clamp_ratio
 minimum_valid_pairs <= runs_per_variant
 minimum_ffr_pairs   <= runs_per_variant
+minimum_baseline_successes <= runs_per_variant
 every weight > 0 and Σ weight > 0
 ```
 
-**Small sample**: for component i, a pair whose `b[i,p]` and `c[i,p]` are both below `small_sample_floor` does not have its ratio computed for that component and is recorded in `data_quality`. A component for which every pair is like this is dropped from the gate.
+**Small sample vs missing**: a *missing* component (absent on either side) is `EVIDENCE_INCOMPLETE` → exit 2 (§3.3). A *small-sample* component is present but weak: for component i, a pair whose `b[i,p]` and `c[i,p]` are both below `small_sample_floor` does not have its ratio computed for that component and is recorded in `data_quality`. A component for which every pair is small-sample is **dropped from the gate**.
+
+When one or more — **but not all** — components are dropped, the gate **renormalizes the weights over the surviving components** and reports `DEGRADED_DATA`. When **every** component is dropped, no surviving component remains and the result is `INCONCLUSIVE`. The surviving weight sum is checked to be positive before any division, so no division by zero can occur.
 
 **Floating-point boundaries**: comparisons are done in log space, converting to `Decimal` and using `epsilon` explicitly.
 
