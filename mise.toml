@@ -1,0 +1,43 @@
+[tools]
+python = "3.12"
+uv = "latest"
+
+[tasks.setup]
+description = "Install dependencies into the project environment"
+run = "uv sync --all-groups"
+
+[tasks.lint]
+description = "Lint"
+run = "uv run ruff check ."
+
+[tasks.fmt]
+description = "Format"
+run = "uv run ruff format ."
+
+[tasks.typecheck]
+description = "Type-check"
+run = "uv run mypy"
+
+[tasks.test]
+description = "Run the unit, contract, architecture and e2e tests"
+run = "uv run pytest -m 'not integration'"
+
+[tasks.check]
+description = "Everything CI runs"
+depends = ["lint", "typecheck", "test"]
+
+[tasks."signoz:up"]
+description = "Bring up SigNoz through Foundry (requires foundryctl on the host)"
+run = "foundryctl cast -f casting.yaml"
+
+[tasks."signoz:smoke"]
+description = "Send one span to the collector and confirm it is queryable"
+run = "uv run morrow smoke-telemetry"
+
+[tasks."demo:record"]
+description = "Record the null and coupling experiments against the demo repository"
+run = "uv run morrow measure --plan experiments/demo.plan.json"
+
+[tasks."demo:verify"]
+description = "Re-derive the verdict from the recorded cassettes and compare"
+run = "uv run morrow verify --cassette-dir cassettes"
