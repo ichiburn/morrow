@@ -1,0 +1,149 @@
+{
+  "digests": {
+    "r20.churn.json": "0bac65ee52acf5bceac4699dbd514ab8bd8ab9d80fd4ab5fd125fd6ccad62568",
+    "r20.events.jsonl": "afc43405f059b55777791c0738fb9ce05dced78e48970257046a27da6a75ff62",
+    "r20.tests.json": "8ed2e6d4553ff186724e531b94f8661a1f6a48bec60aedfeea94b85da3d08063",
+    "r21.churn.json": "ddf2b71efd31b293538f1ecf24c5389e8cad2af87d6dc56aa7c43f3888f26659",
+    "r21.events.jsonl": "c441d4daf60b311b070c685b85f1a364192bc69c01716827279b568e0765002b",
+    "r21.tests.json": "c3ef980612e9973c87aa50e38d6ecfe3b7f50f722c6a14e6744198a745a5ac98",
+    "r90.churn.json": "3ab916a3e2b64c63153ad5173c854b7f063dafbd05d8e980524fec2bc3fff3d2",
+    "r90.events.jsonl": "00ae0484f31f8a0cf88c9bcb94f11e6e0f16eb11f8d89e35b9a8b56c53b37da5",
+    "r90.tests.json": "e2e334ee8ad4e8c59f0d5b975d0261eebd60708fd3b7d4e498b38575fe681348",
+    "r91.churn.json": "ea4d90868c7e9ed1d30efb6143b96b2805ab46603032fc6ca2ba40c105cb74ad",
+    "r91.events.jsonl": "b4fd968cc244785f59fcc82f89bcc8a69218ba5850565b73cd7d7179e0900d07",
+    "r91.tests.json": "8ed2e6d4553ff186724e531b94f8661a1f6a48bec60aedfeea94b85da3d08063",
+    "report.json": "70818efb96dbfc162ad07a31e9594edc4e22e1250f25bdb69e95142ce1773d56",
+    "report.md": "e47a75b321ad806536497cc97e6e7997b112f879c723a0f23656027db4274056"
+  },
+  "experiment_id": "null-control-arms-swapped",
+  "invalid_pairs": [],
+  "kind": "null_control",
+  "model": "claude_sonnet",
+  "null_control_ffr_gate": null,
+  "policy": {
+    "acceptance": {
+      "command_timeout_seconds": 300,
+      "output_limit_bytes": 1048576
+    },
+    "decision": {
+      "component_hard_max": 3.0,
+      "friction_threshold": 1.5
+    },
+    "evidence": {
+      "max_unpaired_tool_uses": 0
+    },
+    "experiment": {
+      "max_pair_retries": 2,
+      "minimum_baseline_successes": 2,
+      "minimum_ffr_pairs": 2,
+      "minimum_valid_pairs": 2,
+      "runs_per_variant": 2
+    },
+    "metrics": {
+      "alpha": 1.0,
+      "churn_exclude": [
+        ".venv/",
+        "__pycache__/",
+        ".pytest_cache/",
+        ".ruff_cache/",
+        ".git/",
+        "*.pyc"
+      ],
+      "clamp_ratio": 10.0,
+      "max_direct_test_invocations": 0,
+      "small_sample_floor": 3,
+      "weights": {
+        "files_read_distinct": 1.0,
+        "final_churn": 1.0,
+        "test_cycles": 1.0
+      }
+    },
+    "null_control": {
+      "maximum_ffr": 1.2
+    },
+    "numeric": {
+      "epsilon": 1e-09
+    }
+  },
+  "provider": "claude-code",
+  "recorded_evidence_mode": "live",
+  "recorded_mode": "measure",
+  "recorded_strict": false,
+  "runs": [
+    {
+      "adopted": true,
+      "attempt_index": 0,
+      "files": {
+        "churn": "r91.churn.json",
+        "events": "r91.events.jsonl",
+        "tests": "r91.tests.json"
+      },
+      "order_position": 1,
+      "pair_id": 0,
+      "regression_detected": false,
+      "run_id": "r91",
+      "run_index": 0,
+      "session_ref": "s0",
+      "status": "ok",
+      "terminal_status": "completed",
+      "variant": "baseline"
+    },
+    {
+      "adopted": true,
+      "attempt_index": 0,
+      "files": {
+        "churn": "r90.churn.json",
+        "events": "r90.events.jsonl",
+        "tests": "r90.tests.json"
+      },
+      "order_position": 0,
+      "pair_id": 0,
+      "regression_detected": false,
+      "run_id": "r90",
+      "run_index": 0,
+      "session_ref": "s0",
+      "status": "ok",
+      "terminal_status": "completed",
+      "variant": "candidate"
+    },
+    {
+      "adopted": true,
+      "attempt_index": 0,
+      "files": {
+        "churn": "r21.churn.json",
+        "events": "r21.events.jsonl",
+        "tests": "r21.tests.json"
+      },
+      "order_position": 3,
+      "pair_id": 1,
+      "regression_detected": false,
+      "run_id": "r21",
+      "run_index": 1,
+      "session_ref": "s0",
+      "status": "ok",
+      "terminal_status": "completed",
+      "variant": "baseline"
+    },
+    {
+      "adopted": true,
+      "attempt_index": 0,
+      "files": {
+        "churn": "r20.churn.json",
+        "events": "r20.events.jsonl",
+        "tests": "r20.tests.json"
+      },
+      "order_position": 2,
+      "pair_id": 1,
+      "regression_detected": false,
+      "run_id": "r20",
+      "run_index": 1,
+      "session_ref": "s0",
+      "status": "ok",
+      "terminal_status": "completed",
+      "variant": "candidate"
+    }
+  ],
+  "scenario_id": "replace-cache",
+  "schema_version": 1,
+  "trace_id": null
+}
