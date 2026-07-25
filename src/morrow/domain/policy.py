@@ -86,6 +86,20 @@ class NullControlPolicy(BaseModel):
     maximum_ffr: float = 1.20
 
 
+class EvidencePolicy(BaseModel):
+    """Caps on the data-quality defects a run may carry and still be counted.
+
+    A tool call whose result never arrived leaves the event stream with an unconfirmed
+    outcome. Zero is the default because such a call is a hole in the trajectory, and a
+    hole is not the same as an absence — accepting them silently would let a run that lost
+    half its evidence be scored as a cheap one (evidence.md §5).
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    max_unpaired_tool_uses: NonNegativeInt = 0
+
+
 class NumericPolicy(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -110,6 +124,7 @@ class Policy(BaseModel):
     null_control: NullControlPolicy = Field(default_factory=NullControlPolicy)
     numeric: NumericPolicy = Field(default_factory=NumericPolicy)
     acceptance: AcceptancePolicy = Field(default_factory=AcceptancePolicy)
+    evidence: EvidencePolicy = Field(default_factory=EvidencePolicy)
 
     @model_validator(mode="after")
     def _cross_field(self) -> Policy:

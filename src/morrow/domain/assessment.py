@@ -292,11 +292,23 @@ def check_null_control(null_ffr_gate: float, policy: Policy) -> EvidenceError | 
         return EvidenceError(
             state=State.INVALID_EXPERIMENT,
             detail=(
-                f"null control FFR_gate {null_ffr_gate} exceeds "
-                f"maximum_ffr {policy.null_control.maximum_ffr}"
+                f"null control FFR_gate {null_ffr_gate:.4f} exceeds "
+                f"maximum_ffr {policy.null_control.maximum_ffr:.4f}"
             ),
         )
     return None
+
+
+def invalidated_experiment(experiment: ValidatedExperiment, error: EvidenceError) -> Assessment:
+    """Wrap a pre-verdict rejection in the shape a report can render.
+
+    ``validate_experiment`` and ``check_null_control`` return an ``EvidenceError`` because
+    they run before any verdict exists. The reader still has to be able to see the outcome:
+    "this experiment was invalidated, and here is how many pairs it had" is the honest
+    report of a day whose null control drifted. No FFR is invented — the assessment carries
+    the counts and the reason, and nothing else.
+    """
+    return _terminal(error.state, experiment, error.detail)
 
 
 def _primary_state(findings: Sequence[Finding]) -> State:
@@ -409,7 +421,10 @@ def evaluate_policy(experiment: ValidatedExperiment, policy: Policy) -> Assessme
         findings.append(
             Finding(
                 state=State.FRICTION_REGRESSION,
-                detail=f"FFR_gate {gate} > threshold {policy.decision.friction_threshold}",
+                detail=(
+                    f"FFR_gate {gate:.4f} > threshold "
+                    f"{policy.decision.friction_threshold:.4f}"
+                ),
             )
         )
     over_axis = sorted(
@@ -422,7 +437,7 @@ def evaluate_policy(experiment: ValidatedExperiment, policy: Policy) -> Assessme
         findings.append(
             Finding(
                 state=State.SINGLE_AXIS_REGRESSION,
-                detail=f"components over hard_max {hard_max}: {over_axis}",
+                detail=f"components over hard_max {hard_max:.4f}: {over_axis}",
             )
         )
 
