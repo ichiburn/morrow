@@ -35,8 +35,10 @@ docs/_history/
 prompts/
 templates/
 crates/
-scripts/
 memory/
+# scripts/ holds MORROW's own tooling now; the two template leftovers are named out.
+scripts/migrate-feature-state.sh
+scripts/review-session.sh
 .agents/
 .codex/
 .gemini/
