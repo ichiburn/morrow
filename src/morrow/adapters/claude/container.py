@@ -36,8 +36,13 @@ DEFAULT_IMAGE = "morrow-agent:0.1"
 
 WORKSPACE_MOUNT = "/workspace"
 AGENT_HOME_MOUNT = "/agent-home"
-VENV_MOUNT = "/venv"
 STATE_MOUNT = "/morrow-state"
+
+#: The virtualenv's *parent* is mounted, not the virtualenv itself. `uv` recreates the
+#: environment by removing and rebuilding the directory, and a bind-mounted directory
+#: cannot be removed from inside the container — the first attempt died on
+#: "failed to remove directory /venv: Permission denied".
+VENVS_MOUNT = "/venvs"
 
 
 @dataclass(frozen=True)
@@ -54,7 +59,8 @@ def build_docker_argv(
     container_name: str,
     workspace: Path,
     agent_home: Path,
-    venv: Path,
+    venvs_dir: Path,
+    venv_name: str,
     state_dir: Path,
     prompt: str,
     model: str,
@@ -89,7 +95,7 @@ def build_docker_argv(
         "-v",
         f"{agent_home}:{AGENT_HOME_MOUNT}",
         "-v",
-        f"{venv}:{VENV_MOUNT}",
+        f"{venvs_dir}:{VENVS_MOUNT}",
         # The launcher's log lives on the evaluator side, so the directory holding it is
         # mounted rather than the workspace being trusted to carry it back.
         "-v",
@@ -99,7 +105,7 @@ def build_docker_argv(
         "-e",
         f"CLAUDE_CONFIG_DIR={AGENT_HOME_MOUNT}",
         "-e",
-        f"UV_PROJECT_ENVIRONMENT={VENV_MOUNT}",
+        f"UV_PROJECT_ENVIRONMENT={VENVS_MOUNT}/{venv_name}",
         "-e",
         "CI=1",
     ]
@@ -146,7 +152,8 @@ async def run_agent_in_container(
     container_name: str,
     workspace: Path,
     agent_home: Path,
-    venv: Path,
+    venvs_dir: Path,
+    venv_name: str,
     state_dir: Path,
     prompt_path: Path,
     stream_path: Path,
@@ -164,7 +171,8 @@ async def run_agent_in_container(
         container_name=container_name,
         workspace=workspace,
         agent_home=agent_home,
-        venv=venv,
+        venvs_dir=venvs_dir,
+        venv_name=venv_name,
         state_dir=state_dir,
         prompt=prompt_path.read_text(encoding="utf-8"),
         model=model,

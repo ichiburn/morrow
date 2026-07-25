@@ -49,7 +49,7 @@ def _uid_gid() -> str:
     return f"{os.getuid()}:{os.getgid()}"
 
 
-def _prewarm_environment(workspace: Path, venv: Path) -> None:
+def _prewarm_environment(workspace: Path, venvs_dir: Path, venv_name: str) -> None:
     """Build the virtualenv in the container before the agent starts.
 
     Doing it up front keeps dependency installation out of the measured window, so the
@@ -61,9 +61,9 @@ def _prewarm_environment(workspace: Path, venv: Path) -> None:
             "docker", "run", "--rm",
             "--user", _uid_gid(),
             "-v", f"{workspace}:/workspace",
-            "-v", f"{venv}:/venv",
+            "-v", f"{venvs_dir}:/venvs",
             "-e", "HOME=/tmp",
-            "-e", "UV_PROJECT_ENVIRONMENT=/venv",
+            "-e", f"UV_PROJECT_ENVIRONMENT=/venvs/{venv_name}",
             "-w", "/workspace",
             "--entrypoint", "uv",
             DEFAULT_IMAGE,
@@ -98,8 +98,11 @@ async def record(variant_dir: str, run_id: str = "r0") -> None:
     )
     print(f"workspace: {workspace.root}")
 
-    workspace.venv_path.mkdir(parents=True, exist_ok=True)
-    _prewarm_environment(workspace.root, workspace.venv_path)
+    venvs_dir = STATE_ROOT / "venvs"
+    venvs_dir.mkdir(parents=True, exist_ok=True)
+    if workspace.venv_path.exists():
+        shutil.rmtree(workspace.venv_path)
+    _prewarm_environment(workspace.root, venvs_dir, run_id)
     print(f"venv:      {workspace.venv_path} (built in-container)")
 
     snapshot_root = STATE_ROOT / "snapshots" / f"{run_id}.pre"
@@ -114,7 +117,8 @@ async def record(variant_dir: str, run_id: str = "r0") -> None:
         container_name=f"morrow-{run_id}",
         workspace=workspace.root,
         agent_home=agent_home,
-        venv=workspace.venv_path,
+        venvs_dir=venvs_dir,
+        venv_name=run_id,
         state_dir=LAUNCHER_LOG_DIR,
         prompt_path=PROMPT,
         stream_path=STATE_ROOT / "streams" / f"{run_id}.jsonl",
@@ -146,7 +150,10 @@ async def record(variant_dir: str, run_id: str = "r0") -> None:
     print(f"permission denials:   {denials}")
     print(f"files_read_distinct:  {files_read}")
     print(f"test_cycles:          {test_cycles}")
-    print(f"final_churn:          {churn.total_lines} (+{churn.added_lines} -{churn.deleted_lines})")
+    print(
+        f"final_churn:          {churn.total_lines} "
+        f"(+{churn.added_lines} -{churn.deleted_lines})"
+    )
     print(f"files +{churn.files_added} ~{churn.files_modified} -{churn.files_deleted}")
     print(f"events:               {len(events)}")
     print(f"audit:                {json.dumps(audit.model_dump())}")
