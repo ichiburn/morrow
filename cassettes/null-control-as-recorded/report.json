@@ -1,0 +1,101 @@
+{
+  "components": [
+    {
+      "baseline_median": 15.5,
+      "candidate_median": 13.0,
+      "dropped": false,
+      "name": "files_read_distinct",
+      "over_hard_max": false,
+      "pair_ratios": [
+        {
+          "pair_id": 0,
+          "ratio": 1.0,
+          "small_sample": false
+        },
+        {
+          "pair_id": 1,
+          "ratio": 0.7058823529411765,
+          "small_sample": false
+        }
+      ],
+      "ratio": 0.8529411764705883
+    },
+    {
+      "baseline_median": 132.0,
+      "candidate_median": 60.0,
+      "dropped": false,
+      "name": "final_churn",
+      "over_hard_max": false,
+      "pair_ratios": [
+        {
+          "pair_id": 0,
+          "ratio": 0.46616541353383456,
+          "small_sample": false
+        },
+        {
+          "pair_id": 1,
+          "ratio": 0.45112781954887216,
+          "small_sample": false
+        }
+      ],
+      "ratio": 0.45864661654135336
+    },
+    {
+      "baseline_median": 2.0,
+      "candidate_median": 1.5,
+      "dropped": false,
+      "name": "test_cycles",
+      "over_hard_max": false,
+      "pair_ratios": [
+        {
+          "pair_id": 0,
+          "ratio": 0.5,
+          "small_sample": false
+        },
+        {
+          "pair_id": 1,
+          "ratio": null,
+          "small_sample": true
+        }
+      ],
+      "ratio": 0.5
+    }
+  ],
+  "evidence_mode": "live",
+  "experiment_id": "null-control-as-recorded",
+  "ffr": {
+    "computed": true,
+    "display": 0.5804824487113203,
+    "exceeds_threshold": false,
+    "gate": 1.0,
+    "threshold": 1.5
+  },
+  "findings": [],
+  "model": "claude_sonnet",
+  "null_control": null,
+  "pairs": {
+    "attempted": 2,
+    "invalid": [],
+    "valid": 2
+  },
+  "provider": "claude-code",
+  "repetitions_k": 2,
+  "scenario_id": "replace-cache",
+  "statistical_significance_claimed": false,
+  "success": {
+    "baseline": 2,
+    "candidate": 2,
+    "successful_pairs": 2,
+    "valid_pairs": 2
+  },
+  "trace_id": null,
+  "verdict": {
+    "advisory": false,
+    "exit_code": 0,
+    "label": "PASS",
+    "mode": "measure",
+    "primary_reason": "no friction finding",
+    "state": "OK",
+    "strict": false
+  }
+}
