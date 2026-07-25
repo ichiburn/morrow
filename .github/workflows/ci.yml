@@ -46,3 +46,30 @@ jobs:
 
       - name: Test
         run: uv run pytest -m 'not integration'
+
+      # C1 and C4 in the README are checkable claims, so they are checked here rather than
+      # asserted in prose. Every published cassette is re-verified from its own evidence:
+      # digests, closed schemas, recomputed metrics, recomputed verdict, and a byte
+      # comparison against the report that was committed alongside it.
+      #
+      # The treatment cassette exits 2 on purpose. Its null control fell outside the
+      # published tolerance band, and the pre-registered rule for that case is to report
+      # the experiment as INVALID_EXPERIMENT — not to widen the band. The expected exit
+      # code is asserted per cassette so a change that silently turned that into a pass
+      # would fail the build.
+      - name: Verify the published cassettes
+        run: |
+          set -u
+          failed=0
+          for entry in "null-control-as-recorded:0" \
+                       "null-control-arms-swapped:0" \
+                       "treatment-replace-cache:2"; do
+            name="${entry%:*}"
+            want="${entry#*:}"
+            uv run morrow verify "cassettes/$name" && got=0 || got=$?
+            if [ "$got" != "$want" ]; then
+              echo "::error::cassettes/$name exited $got, expected $want"
+              failed=1
+            fi
+          done
+          exit "$failed"
