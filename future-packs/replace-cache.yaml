@@ -1,0 +1,31 @@
+version: 1
+pack_id: orders-api-replace-cache
+
+# Frozen before any treatment data was collected. The task, the acceptance conditions and
+# the invariants are fixed here so they cannot be adjusted after seeing a result.
+task:
+  id: replace-cache
+  category: adaptive
+  request_file: replace-cache.prompt.md
+
+acceptance:
+  # argv arrays, never shell strings: the evaluator runs these itself, outside the
+  # workspace, with a minimal environment and no shell interpretation.
+  commands:
+    - ["pytest", "-q", "-p", "no:cacheprovider"]
+
+  # Declarative checks only. A future pack must not be able to run arbitrary code, even
+  # though it lives on the evaluator side.
+  invariants:
+    - type: forbidden_import
+      package: orders.domain
+      module: redis
+
+limits:
+  wall_time_seconds: 900
+  max_budget_usd: 2.50
+
+# The launcher the agent is told to use. `test_cycles` is counted from its log rather than
+# inferred from shell strings in the event stream.
+launcher:
+  command: "uv run --no-sync pytest -q -p no:cacheprovider"
