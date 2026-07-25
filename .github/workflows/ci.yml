@@ -31,8 +31,12 @@ jobs:
       - name: Set up Python
         run: uv python install 3.12
 
+      # `--locked` rather than `--frozen`: it also fails when the lockfile has drifted
+      # from pyproject.toml. Without a lockfile at all, CI would re-resolve every run and
+      # a compromised upstream release inside the declared version ranges would execute
+      # here with no reviewable diff.
       - name: Install dependencies
-        run: uv sync --all-groups --frozen
+        run: uv sync --all-groups --locked
 
       - name: Lint
         run: uv run ruff check .
