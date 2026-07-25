@@ -23,9 +23,10 @@ Design choices worth stating, because a report that overclaims is worse than non
   the two are not related by division — collapsing them is exactly the bug §3.1
   calls out.
 * **No statistical significance is claimed.** The intro carries the C6 sentence
-  verbatim in spirit: at K=4 a sign test cannot reach significance, so all that is
-  reported is an observation measured against a concurrently collected null control
-  under a rule fixed beforehand (design.md §0.1, measurement.md §3.8).
+  verbatim in spirit: at the K these experiments run, a sign test cannot reach
+  significance, so all that is reported is an observation measured against a
+  concurrently collected null control under a rule fixed beforehand (design.md §0.1,
+  measurement.md §3.8). The p-floor in that sentence is computed from K, not quoted.
 * **The JSON is byte-reproducible.** Keys are sorted, numbers stay numeric (never
   stringified), non-finite values are rejected (``allow_nan=False``), the separator
   is LF, and there is exactly one trailing newline. The same input yields the same
@@ -44,19 +45,22 @@ import json
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
-from enum import StrEnum
 
 from morrow.domain.assessment import Assessment, ExitResult, State
+from morrow.domain.cassette import EvidenceMode
 from morrow.domain.friction import component_ratio, exceeds_threshold, is_small_sample
 from morrow.domain.metrics import ComponentName, PairMeasurement, ValidatedExperiment
 from morrow.domain.policy import Policy
 
-
-class EvidenceMode(StrEnum):
-    """Where the evidence came from: a live agent run, or a replayed cassette."""
-
-    LIVE = "live"
-    REPLAY = "replay"
+__all__ = [
+    "EvidenceMode",
+    "InvalidPair",
+    "NullControlOutcome",
+    "ReportMeta",
+    "render_json",
+    "render_markdown",
+    "verdict_label",
+]
 
 
 @dataclass(frozen=True)
@@ -194,11 +198,20 @@ def _pair_cells(
 
 
 def _statistical_disclaimer(k: int) -> str:
+    """The C6 sentence, with the p-floor computed from the actual K.
+
+    The floor is derived rather than quoted: a one-sided sign test over K paired
+    observations cannot go below ``2**-K``, and hard-coding the K=4 value would understate
+    the floor the moment an experiment runs with fewer pairs — which is exactly when
+    overclaiming would be easiest.
+    """
+    denominator = 2**k
     return (
         f"No statistical significance is claimed. At K={k} a sign test cannot "
-        "establish significance (one-sided p floor 1/16 = 0.0625). This is an "
-        "observation measured against a concurrently collected null control, under "
-        "a decision rule fixed before the treatment data was seen."
+        f"establish significance (one-sided p floor 1/{denominator} = "
+        f"{1 / denominator:.4f}). This is an observation measured against a "
+        "concurrently collected null control, under a decision rule fixed before "
+        "the treatment data was seen."
     )
 
 
