@@ -1,0 +1,125 @@
+{
+  "components": [
+    {
+      "baseline_median": 18.0,
+      "candidate_median": 16.0,
+      "dropped": false,
+      "name": "files_read_distinct",
+      "over_hard_max": false,
+      "pair_ratios": [
+        {
+          "pair_id": 0,
+          "ratio": 0.8947368421052632,
+          "small_sample": false
+        },
+        {
+          "pair_id": 1,
+          "ratio": 0.8095238095238095,
+          "small_sample": false
+        },
+        {
+          "pair_id": 2,
+          "ratio": 1.4166666666666667,
+          "small_sample": false
+        }
+      ],
+      "ratio": null
+    },
+    {
+      "baseline_median": 63.0,
+      "candidate_median": 321.0,
+      "dropped": false,
+      "name": "final_churn",
+      "over_hard_max": false,
+      "pair_ratios": [
+        {
+          "pair_id": 0,
+          "ratio": 3.753846153846154,
+          "small_sample": false
+        },
+        {
+          "pair_id": 1,
+          "ratio": 5.111111111111111,
+          "small_sample": false
+        },
+        {
+          "pair_id": 2,
+          "ratio": 4.0,
+          "small_sample": false
+        }
+      ],
+      "ratio": null
+    },
+    {
+      "baseline_median": 1.0,
+      "candidate_median": 3.0,
+      "dropped": false,
+      "name": "test_cycles",
+      "over_hard_max": false,
+      "pair_ratios": [
+        {
+          "pair_id": 0,
+          "ratio": 2.5,
+          "small_sample": false
+        },
+        {
+          "pair_id": 1,
+          "ratio": 2.0,
+          "small_sample": false
+        },
+        {
+          "pair_id": 2,
+          "ratio": null,
+          "small_sample": true
+        }
+      ],
+      "ratio": null
+    }
+  ],
+  "evidence_mode": "live",
+  "experiment_id": "treatment-replace-cache",
+  "ffr": {
+    "computed": false,
+    "display": null,
+    "exceeds_threshold": false,
+    "gate": null,
+    "threshold": 1.5
+  },
+  "findings": [
+    {
+      "detail": "null control FFR_gate 1.7403 exceeds maximum_ffr 1.2000",
+      "state": "INVALID_EXPERIMENT"
+    }
+  ],
+  "model": "claude_sonnet",
+  "null_control": {
+    "ffr_gate": 1.7402771957526717,
+    "maximum_ffr": 1.2,
+    "within_band": false
+  },
+  "pairs": {
+    "attempted": 3,
+    "invalid": [],
+    "valid": 3
+  },
+  "provider": "claude-code",
+  "repetitions_k": 3,
+  "scenario_id": "replace-cache",
+  "statistical_significance_claimed": false,
+  "success": {
+    "baseline": 3,
+    "candidate": 3,
+    "successful_pairs": 3,
+    "valid_pairs": 3
+  },
+  "trace_id": null,
+  "verdict": {
+    "advisory": false,
+    "exit_code": 2,
+    "label": "ERROR",
+    "mode": "measure",
+    "primary_reason": "null control FFR_gate 1.7403 exceeds maximum_ffr 1.2000",
+    "state": "INVALID_EXPERIMENT",
+    "strict": false
+  }
+}
