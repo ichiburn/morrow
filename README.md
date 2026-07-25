@@ -13,10 +13,14 @@ MORROW uses an **AI coding agent as a measuring instrument**.
 
 A future change task is registered in advance. MORROW then runs that same task against
 **both** `main` and the candidate pull request, under identical model, prompt, and resource
-constraints, repeated as four paired runs. The agent's work trajectory — how many distinct
+constraints, repeated as paired runs. The agent's work trajectory — how many distinct
 files it had to read, how many test cycles it burned, how many lines it actually changed —
 is exported to SigNoz over OpenTelemetry, and the **difference between the two sides** is
 computed.
+
+The evidence from a recording is committed as a **cassette**, and `morrow verify`
+re-derives the verdict from it. [Results](#results-recorded-2026-07-25) below are published
+that way: three cassettes, verifiable without trusting this README.
 
 Existing CI gates answer "does the code work now."
 MORROW answers **"can this codebase still absorb the next change efficiently."**
@@ -39,10 +43,10 @@ it cannot measure**. This table is the contract.
 
 | # | Claim | Basis | Strength |
 |---|---|---|---|
-| C1 | The difference in work required for the same future task, across two repository states under identical conditions, can be extracted **reproducibly** | `morrow verify` re-derives the verdict from the recorded evidence | **Strong** — mechanically checkable |
+| C1 | The difference in work required for the same future task, across two repository states under identical conditions, can be extracted **reproducibly** | `morrow verify` re-derives the verdict from the recorded evidence and compares the regenerated report byte-for-byte with the recorded one | **Strong** — mechanically checkable |
 | C2 | For a given experiment, MORROW reports the observed per-component difference between baseline and candidate, without selection | All paired-run ratios are published, not just the median | **Strong** — a capability claim, not a result claim |
-| C3 | Any observed difference is reported alongside a null control acquired in the same recording session | Null and treatment run through an identical procedure | **Medium** — a comparison, not a significance test |
-| C4 | The decision is deterministic and reproducible from the evidence | `verify` runs in CI on every push | **Strong** |
+| C3 | Any observed difference is reported alongside a null control acquired in the same recording session | Null and treatment run through an identical procedure, and **both arm orderings of the null are published** | **Medium** — a comparison, not a significance test |
+| C4 | The decision is deterministic and reproducible from the evidence | `verify` runs in CI on every push, over every committed cassette, with the expected exit code asserted per cassette | **Strong** |
 
 **C2 and C3 are claims about the procedure, not about the outcome.** Whether the coupled
 candidate actually turns out to cost more is a *result*, and results are reported as measured
@@ -53,7 +57,7 @@ candidate actually turns out to cost more is a *result*, and results are reporte
 | # | Not claimed | Why |
 |---|---|---|
 | C5 | Safe execution against untrusted repositories | No OS-level isolation is implemented. **MORROW runs only against trusted repositories.** |
-| C6 | Statistical significance | With four paired runs, the lower bound on a one-sided sign test is 1/16 = 0.0625. This **cannot** be claimed |
+| C6 | Statistical significance | At K paired runs the lower bound on a one-sided sign test is 2⁻ᴷ — 1/8 = 0.125 for the three pairs recorded here. This **cannot** be claimed |
 | C7 | Tamper resistance of the evidence | There is no signing and no provenance. The hashes detect **accidental corruption**, nothing more |
 | C8 | Robustness against an adversarial agent | These are proxy metrics valid under a fixed provider, model, and prompt |
 
@@ -100,6 +104,101 @@ itself under its own rule, which is circular.
 
 ---
 
+## Results (recorded 2026-07-25)
+
+Ten agent runs, one future task (`replace-cache`), one model (`claude-sonnet-5`), one
+prompt, identical resource limits (`--cpus 4 --memory 8g`), each run in its own container.
+Three cassettes are committed under [`cassettes/`](cassettes), and each one re-derives its
+own verdict:
+
+```
+$ morrow verify cassettes/null-control-as-recorded
+PASS · EVIDENCE_REPRODUCED · exit 0
+verdict OK re-derived from the evidence; both report surfaces match byte for byte
+
+$ morrow verify cassettes/null-control-arms-swapped
+PASS · EVIDENCE_REPRODUCED · exit 0
+verdict FRICTION_REGRESSION re-derived from the evidence; both report surfaces match byte for byte
+
+$ morrow verify cassettes/treatment-replace-cache
+ERROR · INVALID_EXPERIMENT · exit 2
+report reproduced byte for byte, and the re-derived verdict is INVALID_EXPERIMENT:
+null control FFR_gate 1.7403 exceeds maximum_ffr 1.2000
+```
+
+### The measured runs
+
+| Pair | Baseline (`main`) | Candidate (coupled) | reads | test cycles | churn |
+|---|---|---|---|---|---|
+| 0 | `r0` | `r1` | 18 → 16 | 1 → 4 | 129 → 487 |
+| 1 | `r2` | `r3` | 20 → 16 | 1 → 3 | 62 → 321 |
+| 2 | `r4` | `r5` | 11 → 16 | 2 → 2 | 63 → 255 |
+
+The null control is two clones of the *same* tree, so its two arms differ by nothing at
+all: `r90` 15/3/132, `r91` 15/1/61, `r20` 16/1/132, `r21` 11/2/59.
+
+### Per-pair ratios, as published in each cassette's report
+
+| | pair | `files_read_distinct` | `test_cycles` | `final_churn` |
+|---|---|---|---|---|
+| **treatment** | 0 | 0.8947 | 2.5000 | **3.7538** |
+| | 1 | 0.8095 | 2.0000 | **5.1111** |
+| | 2 | 1.4167 | small-sample | **4.0000** |
+| **null, as recorded** | 0 | 1.0000 | 0.5000 | 0.4662 |
+| | 1 | 0.7059 | small-sample | 0.4511 |
+| **null, arms swapped** | 0 | 1.0000 | 2.0000 | 2.1452 |
+| | 1 | 1.4167 | small-sample | **2.2167** |
+
+### What this says
+
+**`final_churn` separates, and it separates under either arm ordering.** The smallest
+treatment ratio (3.7538) is above the largest null ratio the null can produce (2.2167).
+All three treatment pairs sit clear of the noise floor. This is the strongest thing in the
+recording.
+
+`test_cycles` points the same way but does **not** separate: the treatment median is 2.25,
+and the null's is 0.50 as recorded but 2.00 with the arms swapped. Two of the three pairs
+fell below the small-sample floor and were dropped rather than counted, which is most of
+why so little is left.
+
+### What this does not say
+
+**The aggregate `FFR_gate` does not separate.** The null control is symmetric by
+construction: both arms are the same tree, so which clone is labelled "baseline" is
+arbitrary. One-sided aggregation is *not* symmetric, and swapping the labels moves the
+null from **1.0000** to **1.7403** — across the published tolerance band of 1.20.
+
+The pre-registered rule for a null outside its band is to report the experiment as
+`INVALID_EXPERIMENT`, not to widen the band. So that is what the treatment cassette
+records, and what CI asserts. Both orderings are committed, so neither can be the one that
+was picked after seeing the data.
+
+`files_read_distinct` carries no signal here: 0.8947, 0.8095, 1.4167 — the third pair
+points the other way. It is reported rather than dropped.
+
+**No statistical significance is claimed.** Three pairs put the floor of a one-sided sign
+test at 1/8 = 0.125.
+
+*(The design anticipated this failure mode: "the cost of one-sided aggregation is that
+even symmetric noise biases upward — the null control is what cancels that bias." The
+null did its job. The instrument reported that it could not separate the aggregate, which
+is the outcome it was built to be able to report.)*
+
+### Reproducing this
+
+```bash
+uv sync --all-groups --locked
+uv run morrow verify cassettes/treatment-replace-cache   # exits 2, as CI asserts
+uv run morrow gate   cassettes/null-control-arms-swapped # exits 1 on the friction finding
+```
+
+`verify` reads only the cassette. It checks every digest, parses every event under the
+closed schema, recomputes the metrics from the events and the churn records, recomputes
+the verdict with the policy embedded in the manifest, regenerates both report surfaces and
+compares them byte-for-byte. Nothing in the recorded report is an input to that decision.
+
+---
+
 ## Design
 
 | Document | Contents |
@@ -131,5 +230,8 @@ Every generated change is reviewed and validated by the author.
 
 ## Status
 
-**In development.**
+**Working, with one measured experiment published.** The gate, the verifier and the
+cassette format are implemented and covered by tests; the recording driver
+(`scripts/record_one.py`) is still a script rather than a `morrow measure` subcommand.
+
 Agents of SigNoz hackathon, 2026-07-20 – 07-26 · Track 01: AI & Agent Observability
