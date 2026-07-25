@@ -23,6 +23,11 @@ auth.json
 .morrow/
 out/
 
+# Foundry: `foundryctl forge` が casting.yaml.lock から生成する配備ファイル。
+# lock がコミットされていれば誰でも再生成できるので、生成物は追跡しない。
+# 先頭 / でリポジトリ直下に限定する（下位階層の同名ディレクトリを巻き込まないため）。
+/pours/
+
 # MORROW: 設計の反復履歴（ローカルの作業記録。公開リポジトリには含めない）
 docs/_history/
 
