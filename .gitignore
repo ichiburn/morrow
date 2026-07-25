@@ -46,6 +46,8 @@ scripts/review-session.sh
 .mcp.json
 .gitmodules
 AGENTS.md.template
+AGENTS.md
+CLAUDE.md
 GEMINI.md
 docs/analysis-cache/
 docs/handoff/
@@ -73,3 +75,10 @@ docs/testing/
 .auto-init-result.json
 .dep-check-result.json
 .trash/
+
+# Claude Code
+.claude/settings.local.json
+
+# Logs
+*.log
+*.pyc
