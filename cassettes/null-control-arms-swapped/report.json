@@ -1,0 +1,106 @@
+{
+  "components": [
+    {
+      "baseline_median": 13.0,
+      "candidate_median": 15.5,
+      "dropped": false,
+      "name": "files_read_distinct",
+      "over_hard_max": false,
+      "pair_ratios": [
+        {
+          "pair_id": 0,
+          "ratio": 1.0,
+          "small_sample": false
+        },
+        {
+          "pair_id": 1,
+          "ratio": 1.4166666666666667,
+          "small_sample": false
+        }
+      ],
+      "ratio": 1.2083333333333335
+    },
+    {
+      "baseline_median": 60.0,
+      "candidate_median": 132.0,
+      "dropped": false,
+      "name": "final_churn",
+      "over_hard_max": false,
+      "pair_ratios": [
+        {
+          "pair_id": 0,
+          "ratio": 2.1451612903225805,
+          "small_sample": false
+        },
+        {
+          "pair_id": 1,
+          "ratio": 2.216666666666667,
+          "small_sample": false
+        }
+      ],
+      "ratio": 2.1809139784946234
+    },
+    {
+      "baseline_median": 1.5,
+      "candidate_median": 2.0,
+      "dropped": false,
+      "name": "test_cycles",
+      "over_hard_max": false,
+      "pair_ratios": [
+        {
+          "pair_id": 0,
+          "ratio": 2.0,
+          "small_sample": false
+        },
+        {
+          "pair_id": 1,
+          "ratio": null,
+          "small_sample": true
+        }
+      ],
+      "ratio": 2.0
+    }
+  ],
+  "evidence_mode": "live",
+  "experiment_id": "null-control-arms-swapped",
+  "ffr": {
+    "computed": true,
+    "display": 1.7402771957526717,
+    "exceeds_threshold": true,
+    "gate": 1.7402771957526717,
+    "threshold": 1.5
+  },
+  "findings": [
+    {
+      "detail": "FFR_gate 1.7403 > threshold 1.5000",
+      "state": "FRICTION_REGRESSION"
+    }
+  ],
+  "model": "claude_sonnet",
+  "null_control": null,
+  "pairs": {
+    "attempted": 2,
+    "invalid": [],
+    "valid": 2
+  },
+  "provider": "claude-code",
+  "repetitions_k": 2,
+  "scenario_id": "replace-cache",
+  "statistical_significance_claimed": false,
+  "success": {
+    "baseline": 2,
+    "candidate": 2,
+    "successful_pairs": 2,
+    "valid_pairs": 2
+  },
+  "trace_id": null,
+  "verdict": {
+    "advisory": true,
+    "exit_code": 0,
+    "label": "PASS",
+    "mode": "measure",
+    "primary_reason": "FFR_gate 1.7403 > threshold 1.5000",
+    "state": "FRICTION_REGRESSION",
+    "strict": false
+  }
+}

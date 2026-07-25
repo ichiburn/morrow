@@ -1,0 +1,191 @@
+{
+  "digests": {
+    "r0.churn.json": "4b69a501235b3ed1c7f4930f7f212f9679b347f33600adcd8e19801d7976971a",
+    "r0.events.jsonl": "1b3d86f03f973e365d85aaef98f47bdca34078ba1c4a94c7c57e4d071f6b8e58",
+    "r0.tests.json": "8ed2e6d4553ff186724e531b94f8661a1f6a48bec60aedfeea94b85da3d08063",
+    "r1.churn.json": "3f25d638d627abd7d9300db944112be55efd93cc9e8126e36192ddf6a2297f90",
+    "r1.events.jsonl": "d581150b74c2cd656da9abe98f9d2879e0763e84ea4523565db4039850ee21c5",
+    "r1.tests.json": "1dfc3b0bb14908695665a41f12e7ea4c743ab610f1facb7c47619655a463e92f",
+    "r2.churn.json": "a0d86a2c5ad2fbd958d8f464c5c3b0330e28500bffc0242e5acbe7fb233fdd7e",
+    "r2.events.jsonl": "ce098919d1161442d35507439bb4b71b638d93d119da425d39029ea5ae414121",
+    "r2.tests.json": "8ed2e6d4553ff186724e531b94f8661a1f6a48bec60aedfeea94b85da3d08063",
+    "r3.churn.json": "df13b69b6a3dcad913195238255e3bcacc1d022b6080f1d63febad37dfaaa9ac",
+    "r3.events.jsonl": "d2ab8a8d3f6da79980733ee1a8219840ad8de76b01e7c0b95c42f9f691de7021",
+    "r3.tests.json": "e2e334ee8ad4e8c59f0d5b975d0261eebd60708fd3b7d4e498b38575fe681348",
+    "r4.churn.json": "f01a007513268199ed37774e675d86a410126d69271ebda57b466f59b3e1fbbb",
+    "r4.events.jsonl": "616967865903fdc891935d1562a507e95791f4df297670ce8418fd90cdb34e3f",
+    "r4.tests.json": "c3ef980612e9973c87aa50e38d6ecfe3b7f50f722c6a14e6744198a745a5ac98",
+    "r5.churn.json": "d2b5b13573a3b416ff13e46606cd9a4471d986c4497b51053a0b615babb63868",
+    "r5.events.jsonl": "aec7c3ef883187ef295c5586b9dbc3d78593a48d953e119a59c112c3a2455721",
+    "r5.tests.json": "c3ef980612e9973c87aa50e38d6ecfe3b7f50f722c6a14e6744198a745a5ac98",
+    "report.json": "ef70d94efb68300cec906456721d3ec7aff0028b625ba9aaacbe434446d0510b",
+    "report.md": "bf8bc69b619e3f92c1b52c9c1b72f6f58cc4e9402aea86711c96a0ee08877ac6"
+  },
+  "experiment_id": "treatment-replace-cache",
+  "invalid_pairs": [],
+  "kind": "treatment",
+  "model": "claude_sonnet",
+  "null_control_ffr_gate": 1.7402771957526717,
+  "policy": {
+    "acceptance": {
+      "command_timeout_seconds": 300,
+      "output_limit_bytes": 1048576
+    },
+    "decision": {
+      "component_hard_max": 3.0,
+      "friction_threshold": 1.5
+    },
+    "evidence": {
+      "max_unpaired_tool_uses": 0
+    },
+    "experiment": {
+      "max_pair_retries": 2,
+      "minimum_baseline_successes": 2,
+      "minimum_ffr_pairs": 3,
+      "minimum_valid_pairs": 3,
+      "runs_per_variant": 3
+    },
+    "metrics": {
+      "alpha": 1.0,
+      "churn_exclude": [
+        ".venv/",
+        "__pycache__/",
+        ".pytest_cache/",
+        ".ruff_cache/",
+        ".git/",
+        "*.pyc"
+      ],
+      "clamp_ratio": 10.0,
+      "max_direct_test_invocations": 0,
+      "small_sample_floor": 3,
+      "weights": {
+        "files_read_distinct": 1.0,
+        "final_churn": 1.0,
+        "test_cycles": 1.0
+      }
+    },
+    "null_control": {
+      "maximum_ffr": 1.2
+    },
+    "numeric": {
+      "epsilon": 1e-09
+    }
+  },
+  "provider": "claude-code",
+  "recorded_evidence_mode": "live",
+  "recorded_mode": "measure",
+  "recorded_strict": false,
+  "runs": [
+    {
+      "adopted": true,
+      "attempt_index": 0,
+      "files": {
+        "churn": "r0.churn.json",
+        "events": "r0.events.jsonl",
+        "tests": "r0.tests.json"
+      },
+      "order_position": 0,
+      "pair_id": 0,
+      "regression_detected": false,
+      "run_id": "r0",
+      "run_index": 0,
+      "session_ref": "s0",
+      "status": "ok",
+      "terminal_status": "completed",
+      "variant": "baseline"
+    },
+    {
+      "adopted": true,
+      "attempt_index": 0,
+      "files": {
+        "churn": "r1.churn.json",
+        "events": "r1.events.jsonl",
+        "tests": "r1.tests.json"
+      },
+      "order_position": 1,
+      "pair_id": 0,
+      "regression_detected": false,
+      "run_id": "r1",
+      "run_index": 0,
+      "session_ref": "s0",
+      "status": "ok",
+      "terminal_status": "completed",
+      "variant": "candidate"
+    },
+    {
+      "adopted": true,
+      "attempt_index": 0,
+      "files": {
+        "churn": "r2.churn.json",
+        "events": "r2.events.jsonl",
+        "tests": "r2.tests.json"
+      },
+      "order_position": 2,
+      "pair_id": 1,
+      "regression_detected": false,
+      "run_id": "r2",
+      "run_index": 1,
+      "session_ref": "s0",
+      "status": "ok",
+      "terminal_status": "completed",
+      "variant": "baseline"
+    },
+    {
+      "adopted": true,
+      "attempt_index": 0,
+      "files": {
+        "churn": "r3.churn.json",
+        "events": "r3.events.jsonl",
+        "tests": "r3.tests.json"
+      },
+      "order_position": 3,
+      "pair_id": 1,
+      "regression_detected": false,
+      "run_id": "r3",
+      "run_index": 1,
+      "session_ref": "s0",
+      "status": "ok",
+      "terminal_status": "completed",
+      "variant": "candidate"
+    },
+    {
+      "adopted": true,
+      "attempt_index": 0,
+      "files": {
+        "churn": "r4.churn.json",
+        "events": "r4.events.jsonl",
+        "tests": "r4.tests.json"
+      },
+      "order_position": 4,
+      "pair_id": 2,
+      "regression_detected": false,
+      "run_id": "r4",
+      "run_index": 2,
+      "session_ref": "s0",
+      "status": "ok",
+      "terminal_status": "completed",
+      "variant": "baseline"
+    },
+    {
+      "adopted": true,
+      "attempt_index": 0,
+      "files": {
+        "churn": "r5.churn.json",
+        "events": "r5.events.jsonl",
+        "tests": "r5.tests.json"
+      },
+      "order_position": 5,
+      "pair_id": 2,
+      "regression_detected": false,
+      "run_id": "r5",
+      "run_index": 2,
+      "session_ref": "s0",
+      "status": "ok",
+      "terminal_status": "completed",
+      "variant": "candidate"
+    }
+  ],
+  "scenario_id": "replace-cache",
+  "schema_version": 1,
+  "trace_id": null
+}
