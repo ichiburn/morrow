@@ -31,7 +31,7 @@ from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
 from morrow.domain.assessment import Mode
 from morrow.domain.events import KnownModel, RunId, SessionRef
 from morrow.domain.metrics import Variant
-from morrow.domain.policy import Policy
+from morrow.domain.policy import FinitePositiveFloat, Policy
 
 #: The schema version of the cassette format. A cassette written by a different version is
 #: rejected rather than best-effort parsed: silently reading an older layout is how a
@@ -143,11 +143,15 @@ class ChurnRecord(BaseModel):
 
 
 class LauncherRecord(BaseModel):
-    """The launcher's own tally for one run.
+    """The launcher's own log for one run: one exit code per invocation, in order.
 
-    ``launcher_invocations`` is the primary source for ``test_cycles`` (evidence.md §6.4) —
-    a count of lines the launcher itself appended, not something inferred from the event
-    stream.
+    This is the primary source for ``test_cycles`` (evidence.md §6.4) — what the launcher
+    itself appended, not something inferred from the event stream.
+
+    Exit codes are kept rather than a bare count so that **whether the run passed is
+    re-derivable from the evidence**. A manifest that merely asserted ``status: ok`` would
+    be an unchecked claim by whoever built the cassette, and a verifier has no business
+    taking the candidate's word for the one fact the verdict turns on.
 
     The agent bypassing the launcher is deliberately *not* recorded here. That count is
     derivable from the events (a ``command`` event whose purpose is ``direct_test``), and
@@ -157,7 +161,22 @@ class LauncherRecord(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    launcher_invocations: NonNegativeInt
+    #: Bounded: a launcher log is a record of test runs, not an unbounded array.
+    exit_codes: Annotated[tuple[NonNegativeInt, ...], Field(max_length=1024)]
+
+    @property
+    def invocations(self) -> int:
+        return len(self.exit_codes)
+
+    @property
+    def acceptance_passed(self) -> bool:
+        """Whether the last invocation exited zero.
+
+        A run that never invoked the launcher did not pass. Absent evidence is absence;
+        reading "no failures recorded" as "the tests passed" is the fail-open this project
+        exists to avoid.
+        """
+        return bool(self.exit_codes) and self.exit_codes[-1] == 0
 
 
 class RunFiles(BaseModel):
@@ -225,7 +244,13 @@ class Manifest(BaseModel):
     #: The null control's ``FFR_gate``, carried by a treatment cassette so the two numbers
     #: appear on the same screen (§3.8). It is a reference point, never an input to the
     #: threshold — the threshold is fixed in ``policy`` before any treatment data exists.
-    null_control_ffr_gate: float | None = None
+    #:
+    #: Bounded, because this is the one number in the manifest that a cassette author
+    #: chooses freely and that reaches ``math.log`` unguarded. An FFR is ``exp(...)`` and
+    #: therefore positive by construction; a manifest claiming 0, a negative, or the bare
+    #: ``NaN`` token that ``json.loads`` accepts would crash the comparison rather than
+    #: fail it, and a traceback is not one of the exit codes in the state table.
+    null_control_ffr_gate: FinitePositiveFloat | None = None
     #: The SigNoz trace the runs were exported under. Bounded to W3C trace-id shape.
     trace_id: Annotated[str, Field(pattern=r"^[0-9a-f]{32}$")] | None = None
 
