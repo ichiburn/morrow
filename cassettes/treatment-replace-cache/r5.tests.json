@@ -1,3 +1,6 @@
 {
-  "launcher_invocations": 2
+  "exit_codes": [
+    0,
+    0
+  ]
 }

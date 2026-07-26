@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from _recording import ROOT, RecordedRun, load_run
 
 from morrow.adapters.cassette.store import digest_of, encode_events, encode_json, write_cassette
-from morrow.adapters.cassette.verify import report_meta
+from morrow.adapters.cassette.verify import report_meta, verify_path
 from morrow.adapters.report.render import render_json, render_markdown
 from morrow.domain.assessment import (
     Assessment,
@@ -157,6 +157,41 @@ def _session_ref(run: RecordedRun) -> str:
     return start.session_ref
 
 
+def _assert_publishable(run: RecordedRun) -> None:
+    """Refuse to publish a recording whose normalisation lost something.
+
+    These defects exist only in the raw provider stream, and the raw stream is not
+    published — so after this point nobody, including ``verify``, can ever detect them. A
+    tool call whose result never arrived, a line that would not parse, a duplicate tool id:
+    each one is work that may have happened and left no trace, which would be scored as a
+    cheaper run rather than as a broken measurement.
+
+    ``unknown_raw_kinds`` is deliberately not here. Those events *do* survive publication,
+    as ``raw_kind: unknown``, so a reader can count them in the cassette and weigh them.
+    Recording them honestly is the right answer; refusing to publish is not.
+    """
+    audit = run.audit
+    blocking = {
+        "unparsable_lines": audit.unparsable_lines,
+        "orphaned_tool_results": audit.orphaned_tool_results,
+        "duplicate_tool_ids": audit.duplicate_tool_ids,
+        "unpaired_tool_uses": audit.unpaired_tool_uses,
+        "direct_test_invocations": audit.direct_test_invocations,
+        "unclassifiable_commands": audit.unclassifiable_commands,
+    }
+    found = {name: count for name, count in blocking.items() if count}
+    if found:
+        raise SystemExit(
+            f"run {run.source_run}: normalisation left defects that cannot be checked "
+            f"after publication: {found}"
+        )
+    if _terminal_status(run) is not TerminalStatus.COMPLETED:
+        raise SystemExit(
+            f"run {run.source_run}: terminal status is not 'completed'; it must not be "
+            "adopted into a published cassette"
+        )
+
+
 def _run_files(run: RecordedRun) -> tuple[RunFiles, dict[str, bytes]]:
     """The three published files for one run, and the names they are stored under."""
     names = RunFiles(
@@ -173,7 +208,7 @@ def _run_files(run: RecordedRun) -> tuple[RunFiles, dict[str, bytes]]:
         binary_bytes_changed=run.churn.binary_bytes_changed,
         binary_files_changed=run.churn.binary_files_changed,
     )
-    tests = LauncherRecord(launcher_invocations=run.test_cycles)
+    tests = LauncherRecord(exit_codes=tuple(entry["exit_code"] for entry in run.launcher))
     payload = {
         names.events: encode_events(run.events),
         names.churn: encode_json(churn.model_dump(mode="json")),
@@ -185,6 +220,8 @@ def _run_files(run: RecordedRun) -> tuple[RunFiles, dict[str, bytes]]:
 def build(spec: ExperimentSpec, *, null_ffr_gate: float | None = None) -> Assessment:
     """Build one cassette and return the assessment that was recorded into it."""
     loaded = {source: load_run(source) for source in spec.order}
+    for run in loaded.values():
+        _assert_publishable(run)
     policy = policy_for(len(spec.pairs))
 
     entries: list[RunEntry] = []
@@ -272,10 +309,25 @@ def build(spec: ExperimentSpec, *, null_ffr_gate: float | None = None) -> Assess
     destination = CASSETTE_ROOT / spec.experiment_id
     write_cassette(destination, manifest, files)
 
+    # Verify what was just written, through the real verifier. The builder and the verifier
+    # apply the same rules by construction, but only one of them is the one a reader runs —
+    # and a cassette that fails its own verification is worse than no cassette at all. This
+    # also catches the per-run invariants the builder does not itself check.
+    check = verify_path(destination)
+    if check.assessment is None or check.assessment.state is not assessment.state:
+        raise SystemExit(
+            f"{spec.experiment_id}: written cassette does not verify as recorded "
+            f"(recorded {assessment.state.value}, verifier said {check.state.value}: "
+            f"{check.detail})"
+        )
+    if check.report_matches is not True:
+        raise SystemExit(f"{spec.experiment_id}: written report is not reproducible")
+
     ffr = "n/a" if assessment.ffr_gate is None else f"{assessment.ffr_gate:.4f}"
     print(
         f"{spec.experiment_id:30} {assessment.state.value:20} "
-        f"FFR_gate {ffr:>8}  exit {exit_result.exit_code}  -> {destination.relative_to(ROOT)}"
+        f"FFR_gate {ffr:>8}  exit {exit_result.exit_code}  "
+        f"verify={check.state.value} -> {destination.relative_to(ROOT)}"
     )
     return assessment
 

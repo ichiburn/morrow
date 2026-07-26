@@ -18,7 +18,6 @@ from pathlib import Path
 
 from morrow.adapters.claude.stream import ClaudeStreamNormalizer
 from morrow.adapters.fs.snapshot import Churn, Snapshot, compute_churn, take_snapshot
-from morrow.adapters.fs.workspace import count_launcher_invocations
 from morrow.domain.events import AgentEvent, EventKind, NormalizationAudit
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -109,8 +108,3 @@ def load_run(source_run: str) -> RecordedRun:
         churn=churn,
         launcher=tuple(launcher_entries(source_run)),
     )
-
-
-def count_launcher_log(source_run: str) -> int:
-    """The launcher count straight from the log file, for callers that want only that."""
-    return count_launcher_invocations(STATE_ROOT / "launcher-log" / f"{source_run}.jsonl")

@@ -15,6 +15,13 @@ touched only at step 5, and only to be compared against — never to be believed
 ``gate`` shares steps 1-4 and **stops before step 5**, because a recorded artifact must
 not be an input to a blocking decision (§4.6). Its verdict is the recomputed one.
 
+Precisely what that means, since the distinction is easy to overstate: ``gate`` never reads
+the *content* of the recorded report, and no byte of it can change which verdict comes out.
+It does still require the report to be present and to match its digest, because step 1
+checks the integrity of the cassette as a whole — a cassette missing a file, or carrying one
+that was altered, is rejected before anything is computed. So the report's **existence**
+affects whether ``gate`` decides at all; its **contents** never affect what it decides.
+
 The individual checks live in :mod:`morrow.adapters.cassette.checks`; what this module
 owns is the order they run in and what each outcome means.
 """
@@ -66,6 +73,7 @@ from morrow.domain.cassette import (
     Manifest,
 )
 from morrow.domain.metrics import ValidatedExperiment
+from morrow.domain.policy import Policy, default_policy, evaluator_fingerprint
 
 #: The two modes that decide from recorded evidence. ``measure`` is absent by construction:
 #: it runs the experiment, so handing it a cassette is a category error rather than a
@@ -151,13 +159,19 @@ def verify_bytes(
     *,
     mode: VerificationMode = Mode.VERIFY,
     strict: bool = False,
+    evaluator_policy: Policy | None = None,
 ) -> Verification:
     """Run the §5.2 procedure over an already-read cassette.
 
     ``mode`` selects what the exit code means, not what is checked: ``verify`` compares the
     regenerated report against the recorded one and reports reproduction; ``gate`` stops
     after the recomputed verdict and lets a friction finding block.
+
+    ``evaluator_policy`` is the thresholds ``gate`` insists on; it defaults to the published
+    ones. It is unused under ``verify``, which reproduces a decision under the policy that
+    made it.
     """
+    canonical = evaluator_policy if evaluator_policy is not None else default_policy()
     parsed = parse_manifest(cassette.manifest_bytes)
     if isinstance(parsed, str):
         return _fail(
@@ -165,6 +179,25 @@ def verify_bytes(
         )
     manifest = parsed
     policy = manifest.policy
+
+    # §4.4: the gate decides only under the evaluator's own thresholds. A cassette supplies
+    # its policy so it can be verified without external state, but letting that policy
+    # decide a *blocking* outcome would let the author of a regression pick the bar they
+    # are measured against. The sample-size fields are excluded from the comparison — those
+    # are properties of the recording, not of the rule.
+    if mode is Mode.GATE and evaluator_fingerprint(policy) != evaluator_fingerprint(canonical):
+        return _fail(
+            mode,
+            EvidenceError(
+                state=State.GATE_PRECONDITION_UNMET,
+                detail=(
+                    "the cassette's thresholds and metric parameters differ from the "
+                    "evaluator's; gate does not decide under a policy the candidate supplied"
+                ),
+            ),
+            strict=strict,
+            manifest=manifest,
+        )
 
     for error in (
         check_digests(manifest, cassette.files),
@@ -187,14 +220,27 @@ def verify_bytes(
     if isinstance(experiment, EvidenceError):
         return _fail(mode, experiment, strict=strict, manifest=manifest)
 
-    # A treatment experiment is only interpretable beside its null control. A null outside
-    # the band invalidates the day's experiment rather than changing its verdict (§3.8), so
-    # the rejection replaces the assessment instead of short-circuiting past the report:
-    # "the experiment was invalidated" is a result a reader is entitled to see rendered.
+    # A treatment experiment is only interpretable beside its null control. Omitting the
+    # null is not a way to skip the check — a treatment without one is incomplete evidence,
+    # because the number it would be judged against was never collected (§3.8, §4.4).
+    if manifest.kind is ExperimentKind.TREATMENT and manifest.null_control_ffr_gate is None:
+        return _fail(
+            mode,
+            EvidenceError(
+                state=State.EVIDENCE_INCOMPLETE,
+                detail="treatment cassette carries no null control result",
+            ),
+            strict=strict,
+            manifest=manifest,
+        )
+
+    # A null outside the band invalidates the day's experiment rather than changing its
+    # verdict (§3.8), so the rejection replaces the assessment instead of short-circuiting
+    # past the report: "the experiment was invalidated" is a result a reader is entitled to
+    # see rendered.
     null_error = (
         check_null_control(manifest.null_control_ffr_gate, policy)
-        if manifest.kind is ExperimentKind.TREATMENT
-        and manifest.null_control_ffr_gate is not None
+        if manifest.null_control_ffr_gate is not None
         else None
     )
     assessment = (
@@ -255,7 +301,12 @@ def verify_bytes(
     # sound: a verdict that is itself an evidence, infrastructure or not-comparable state
     # stays exit 2 in every mode (§4.2). Reproducing an invalidated experiment faithfully
     # is still an invalidated experiment.
-    if assessment.severity >= Severity.INCONCLUSIVE:
+    # ``--strict`` is about degraded data, and degraded data survives reproduction — the
+    # report matches, the verdict is simply built on components that had to be dropped.
+    # Folding it into EVIDENCE_REPRODUCED would make the flag silently do nothing.
+    if assessment.severity >= Severity.INCONCLUSIVE or (
+        strict and assessment.state is State.DEGRADED_DATA
+    ):
         return Verification(
             enforce(Mode.VERIFY, assessment, strict=strict),
             (
@@ -290,7 +341,11 @@ def verify_bytes(
 
 
 def verify_path(
-    path: Path, *, mode: VerificationMode = Mode.VERIFY, strict: bool = False
+    path: Path,
+    *,
+    mode: VerificationMode = Mode.VERIFY,
+    strict: bool = False,
+    evaluator_policy: Policy | None = None,
 ) -> Verification:
     """Read a cassette from disk and verify it.
 
@@ -306,4 +361,6 @@ def verify_path(
             EvidenceError(state=State.INFRASTRUCTURE_ERROR, detail=str(error)),
             strict=strict,
         )
-    return verify_bytes(cassette, mode=mode, strict=strict)
+    return verify_bytes(
+        cassette, mode=mode, strict=strict, evaluator_policy=evaluator_policy
+    )

@@ -4,8 +4,8 @@
 
 - Mode `measure` · Evidence `live` · Experiment `null-control-as-recorded` · Scenario `replace-cache`
 - Provider `claude-code` · Model `claude_sonnet`
-- Repetitions: K = 2 pairs
-- No statistical significance is claimed. At K=2 a sign test cannot establish significance (one-sided p floor 1/4 = 0.2500). This is an observation measured against a concurrently collected null control, under a decision rule fixed before the treatment data was seen.
+- Repetitions: K = 2 pairs planned, 2 compared
+- No statistical significance is claimed — over 2 compared pair(s) a one-sided sign test cannot reach conventional significance — its p floor is 1/4 = 0.2500, above 0.05. This is an observation measured against a concurrently collected null control, under a decision rule fixed before the treatment data was seen.
 
 ## Verdict
 
