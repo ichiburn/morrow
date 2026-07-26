@@ -64,8 +64,16 @@ def _emit(outcome: Verification, report_path: Path | None) -> None:
     if outcome.assessment is not None and outcome.assessment.ffr_gate is not None:
         typer.echo(f"FFR_gate {outcome.assessment.ffr_gate:.4f}")
     if report_path is not None and outcome.report_markdown is not None:
-        report_path.write_text(outcome.report_markdown, encoding="utf-8")
-        typer.echo(f"report written to {report_path}")
+        # An unwritable report path must not become the exit code. The verdict is already
+        # decided and already printed; letting an OSError escape here would replace a
+        # deliberate 0/1/2 with whatever the traceback produces — and a verify that
+        # reproduced its evidence would exit 1, which reads as a friction finding.
+        try:
+            report_path.write_text(outcome.report_markdown, encoding="utf-8")
+        except OSError as error:
+            typer.echo(f"could not write the report to {report_path}: {error}", err=True)
+        else:
+            typer.echo(f"report written to {report_path}")
 
 
 @app.command()

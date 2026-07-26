@@ -310,6 +310,11 @@ def verify_bytes(
     # ``--strict`` is about degraded data, and degraded data survives reproduction — the
     # report matches, the verdict is simply built on components that had to be dropped.
     # Folding it into EVIDENCE_REPRODUCED would make the flag silently do nothing.
+    #
+    # It keys on the *primary* state, matching ``enforce``. When a friction finding
+    # co-occurs, friction is the primary verdict and this does not fire — which is correct
+    # rather than a gap: the flag's contract is "promote DEGRADED_DATA from pass to
+    # failure", and a run whose headline is a friction finding was never a pass to promote.
     if assessment.severity >= Severity.INCONCLUSIVE or (
         strict and assessment.state is State.DEGRADED_DATA
     ):

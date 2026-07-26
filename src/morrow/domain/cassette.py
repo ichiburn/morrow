@@ -26,7 +26,7 @@ from collections.abc import Mapping
 from enum import StrEnum
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt
+from pydantic import BaseModel, ConfigDict, Field
 
 from morrow.domain.assessment import Mode
 from morrow.domain.events import KnownModel, RunId, SessionRef
@@ -43,6 +43,21 @@ CASSETTE_SCHEMA_VERSION: Literal[1] = 1
 FileName = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9._-]{0,63}$")]
 #: Lowercase hex SHA-256.
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
+
+#: A count that will be converted to a float on its way into the metrics.
+#:
+#: Python integers are arbitrary precision and JSON has no width limit, so an unbounded
+#: ``NonNegativeInt`` accepts a 400-digit number that ``float()`` then refuses with
+#: ``OverflowError`` — a traceback where a verdict belongs, which is the same fail-closed
+#: hole the non-finite float bound closes. A billion changed lines is already far past
+#: anything a real recording produces.
+BoundedCount = Annotated[int, Field(ge=0, le=10**9)]
+
+#: A process exit code. POSIX gives eight bits.
+ExitCode = Annotated[int, Field(ge=0, le=255)]
+
+#: An index into an experiment: pair, attempt, run or ordering position.
+BoundedIndex = Annotated[int, Field(ge=0, le=1024)]
 #: Identifiers that appear in the published report. Bounded so neither can carry prose.
 ExperimentId = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")]
 ScenarioId = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9-]{0,63}$")]
@@ -115,7 +130,7 @@ class InvalidPairRecord(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    pair_id: NonNegativeInt
+    pair_id: BoundedIndex
     reason: InvalidPairReason
 
 
@@ -129,13 +144,13 @@ class ChurnRecord(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    added_lines: NonNegativeInt
-    deleted_lines: NonNegativeInt
-    files_added: NonNegativeInt
-    files_deleted: NonNegativeInt
-    files_modified: NonNegativeInt
-    binary_bytes_changed: NonNegativeInt = 0
-    binary_files_changed: NonNegativeInt = 0
+    added_lines: BoundedCount
+    deleted_lines: BoundedCount
+    files_added: BoundedCount
+    files_deleted: BoundedCount
+    files_modified: BoundedCount
+    binary_bytes_changed: BoundedCount = 0
+    binary_files_changed: BoundedCount = 0
 
     @property
     def total_lines(self) -> int:
@@ -162,7 +177,7 @@ class LauncherRecord(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     #: Bounded: a launcher log is a record of test runs, not an unbounded array.
-    exit_codes: Annotated[tuple[NonNegativeInt, ...], Field(max_length=1024)]
+    exit_codes: Annotated[tuple[ExitCode, ...], Field(max_length=1024)]
 
     @property
     def invocations(self) -> int:
@@ -196,11 +211,11 @@ class RunEntry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     run_id: RunId
-    run_index: NonNegativeInt
+    run_index: BoundedIndex
     variant: Variant
-    pair_id: NonNegativeInt
-    order_position: NonNegativeInt
-    attempt_index: NonNegativeInt
+    pair_id: BoundedIndex
+    order_position: BoundedIndex
+    attempt_index: BoundedIndex
     adopted: bool
     terminal_status: TerminalStatus
     status: RunStatus
