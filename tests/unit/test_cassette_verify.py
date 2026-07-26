@@ -53,9 +53,6 @@ from morrow.domain.events import (
 from morrow.domain.metrics import ComponentName, Variant
 from morrow.domain.policy import ExperimentPolicy, MetricsPolicy, Policy
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-PUBLISHED = REPO_ROOT / "cassettes"
-
 _WEIGHTS = {
     ComponentName.FILES_READ_DISTINCT: 1.0,
     ComponentName.TEST_CYCLES: 1.0,
@@ -136,8 +133,9 @@ def _run(
                 files_modified=0,
             ).model_dump(mode="json")
         ),
+        # A passing run: every invocation exited zero, and the last one is what decides.
         names.tests: encode_json(
-            LauncherRecord(launcher_invocations=tests).model_dump(mode="json")
+            LauncherRecord(exit_codes=(0,) * tests).model_dump(mode="json")
         ),
     }
     entry = RunEntry(
@@ -156,11 +154,26 @@ def _run(
     return entry, files
 
 
-def _build(root: Path, *, candidate_churn: int = 40) -> Path:
-    """A two-pair cassette whose candidate side is deliberately more expensive."""
+def _build(
+    root: Path,
+    *,
+    baseline: tuple[int, int, int] = (10, 4, 10),
+    candidate: tuple[int, int, int] = (12, 5, 40),
+) -> Path:
+    """A two-pair cassette. Each arm is ``(reads, test cycles, churn)``.
+
+    The defaults make the candidate side expensive enough to trip the gate. Passing equal
+    arms with test counts below the small-sample floor produces a DEGRADED_DATA verdict
+    instead, which is what ``--strict`` exists to act on.
+    """
     from morrow.adapters.cassette.verify import report_meta
     from morrow.adapters.report.render import render_json, render_markdown
-    from morrow.domain.assessment import enforce, evaluate_policy, validate_experiment
+    from morrow.domain.assessment import (
+        EvidenceError,
+        enforce,
+        evaluate_policy,
+        validate_experiment,
+    )
     from morrow.domain.metrics import RawPairMeasurement
 
     policy = _policy()
@@ -169,10 +182,10 @@ def _build(root: Path, *, candidate_churn: int = 40) -> Path:
     measurements: list[RawPairMeasurement] = []
 
     spec = [
-        ("r0", Variant.BASELINE, 0, 0, 0, 10, 4, 10),
-        ("r1", Variant.CANDIDATE, 0, 0, 1, 12, 5, candidate_churn),
-        ("r2", Variant.BASELINE, 1, 1, 2, 10, 4, 10),
-        ("r3", Variant.CANDIDATE, 1, 1, 3, 12, 5, candidate_churn),
+        ("r0", Variant.BASELINE, 0, 0, 0, *baseline),
+        ("r1", Variant.CANDIDATE, 0, 0, 1, *candidate),
+        ("r2", Variant.BASELINE, 1, 1, 2, *baseline),
+        ("r3", Variant.CANDIDATE, 1, 1, 3, *candidate),
     ]
     counts: dict[int, dict[Variant, dict[ComponentName, float]]] = {}
     for run_id, variant, pair_id, run_index, order, reads, tests, churn in spec:
@@ -206,8 +219,10 @@ def _build(root: Path, *, candidate_churn: int = 40) -> Path:
         )
 
     experiment = validate_experiment(measurements, policy)
-    assert not isinstance(experiment, tuple) and hasattr(experiment, "pairs")
-    assessment = evaluate_policy(experiment, policy)  # type: ignore[arg-type]
+    # The fixture's own evidence must be valid, or every test built on it is testing the
+    # wrong failure.
+    assert not isinstance(experiment, EvidenceError), experiment.detail
+    assessment = evaluate_policy(experiment, policy)
     exit_result = enforce(Mode.MEASURE, assessment)
 
     draft = Manifest(
@@ -221,6 +236,10 @@ def _build(root: Path, *, candidate_churn: int = 40) -> Path:
         policy=policy,
         runs=tuple(entries),
         digests={},
+        # A treatment is only interpretable beside a null control, so one is required.
+        # This fixture's null sits inside the band; the interesting case — a null that
+        # does not — is covered by the published cassettes.
+        null_control_ffr_gate=1.0,
     )
     meta = report_meta(draft)
     files[REPORT_JSON_NAME] = render_json(
@@ -433,6 +452,162 @@ def test_gate_ignores_the_recorded_report_entirely(cassette: Path) -> None:
     outcome = verify_path(cassette, mode=Mode.GATE)
     assert outcome.state is State.FRICTION_REGRESSION
     assert outcome.exit_code == 1
+
+
+# --- a hostile cassette: what an adversarial review found, pinned ------------------
+#
+# Everything below corresponds to a way a cassette author could have got a favourable
+# outcome out of `verify` or `gate` before review. Each test states the attack and asserts
+# the state that now stops it.
+
+
+def _patch_manifest(root: Path, mutate: object) -> None:
+    """Apply a mutation to the manifest JSON and write it back.
+
+    Manifest edits do not need a digest fix — the manifest is not in its own digest table.
+    """
+    manifest = json.loads((root / MANIFEST_NAME).read_text())
+    assert callable(mutate)
+    mutate(manifest)
+    (root / MANIFEST_NAME).write_bytes(encode_json(manifest))
+
+
+@pytest.mark.parametrize("hostile", [0.0, -1.0, float("nan"), float("inf")])
+def test_a_non_finite_null_control_is_refused_not_crashed(cassette: Path, hostile: float) -> None:
+    """A threshold comparison takes the log of this number.
+
+    Zero and negatives raise ValueError, NaN raises decimal.InvalidOperation, and either
+    leaves the CLI exiting 1 on a traceback — a code the state table does not contain. The
+    bound belongs on the schema, so the cassette is rejected before any of that.
+    """
+    text = json.dumps({"null_control_ffr_gate": hostile}, allow_nan=True)
+    manifest = json.loads((cassette / MANIFEST_NAME).read_text())
+    manifest["null_control_ffr_gate"] = json.loads(text)["null_control_ffr_gate"]
+    (cassette / MANIFEST_NAME).write_bytes(
+        (json.dumps(manifest, sort_keys=True, indent=2, allow_nan=True) + "\n").encode()
+    )
+    outcome = verify_path(cassette)
+    assert outcome.state is State.CASSETTE_CORRUPTED
+    assert outcome.exit_code == 2
+
+
+def test_an_enormous_epsilon_cannot_move_the_threshold_out_of_reach(cassette: Path) -> None:
+    """`exceeds_threshold` adds epsilon to the right-hand side, so a large enough one makes
+    every comparison answer "within" — a fail-open switch that appears nowhere in the
+    rendered report."""
+    _patch_manifest(cassette, lambda m: m["policy"]["numeric"].__setitem__("epsilon", 1e9))
+    outcome = verify_path(cassette, mode=Mode.GATE)
+    assert outcome.state is State.CASSETTE_CORRUPTED
+    assert outcome.exit_code == 2
+
+
+def test_gate_refuses_a_policy_the_candidate_chose(cassette: Path) -> None:
+    """The cassette arrives from the pull request under review, and it carries the policy.
+
+    Letting that policy decide a blocking outcome would let the author of a regression pick
+    the bar they are measured against: raise `friction_threshold` to 9 and the same evidence
+    passes. `gate` compares the deciding fields against the evaluator's own and refuses.
+    """
+
+    def raise_thresholds(manifest: dict) -> None:
+        manifest["policy"]["decision"]["friction_threshold"] = 9.0
+        manifest["policy"]["decision"]["component_hard_max"] = 9.0
+        manifest["policy"]["metrics"]["clamp_ratio"] = 10.0
+
+    _patch_manifest(cassette, raise_thresholds)
+    # The report no longer follows from the altered policy, so verify stops at step 5;
+    # what matters here is that gate refuses before it ever computes a verdict.
+    assert verify_path(cassette, mode=Mode.GATE).state is State.GATE_PRECONDITION_UNMET
+    assert verify_path(cassette, mode=Mode.GATE).exit_code == 2
+
+
+def test_a_treatment_without_a_null_control_is_incomplete(cassette: Path) -> None:
+    """Omitting the null is not a way to skip the null check. The number the treatment
+    would be judged against was never collected, so there is nothing to interpret."""
+    _patch_manifest(cassette, lambda m: m.__setitem__("null_control_ffr_gate", None))
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INCOMPLETE
+    assert outcome.exit_code == 2
+
+
+def test_an_extra_file_cannot_be_admitted_by_listing_its_digest(cassette: Path) -> None:
+    """The allowed file set is derived from `runs[].files` plus the two reports.
+
+    Deriving it from the digest table instead would make the rule circular: anything at all
+    becomes permitted by vouching for it, and a cassette could ship a notes file full of
+    real paths while still verifying.
+    """
+    payload = b"/home/someone/secret/path.py: rm -rf --no-preserve-root /\n"
+    (cassette / "notes.txt").write_bytes(payload)
+    _patch_manifest(cassette, lambda m: m["digests"].__setitem__("notes.txt", digest_of(payload)))
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INCOMPLETE
+
+
+def test_one_run_cannot_be_counted_as_two_repetitions(cassette: Path) -> None:
+    """Pair 1 is repointed at pair 0's evidence. Every digest still matches and every
+    per-run invariant still holds; only a uniqueness check catches that the experiment
+    measured one run and claimed two."""
+
+    def duplicate_pair_zero(manifest: dict) -> None:
+        by_id = {run["run_id"]: run for run in manifest["runs"]}
+        for source, target in (("r0", "r2"), ("r1", "r3")):
+            by_id[target]["files"] = dict(by_id[source]["files"])
+            by_id[target]["run_id"] = source
+        # Withdraw the now-unreferenced evidence so the file set stays self-consistent.
+        # Without this the cassette fails one step earlier on structure, and the
+        # uniqueness rule — the thing under test — never runs.
+        for name in [n for n in manifest["digests"] if n.startswith(("r2.", "r3."))]:
+            del manifest["digests"][name]
+
+    _patch_manifest(cassette, duplicate_pair_zero)
+    for stale in list(cassette.glob("r2.*")) + list(cassette.glob("r3.*")):
+        stale.unlink()
+
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert "more than one" in outcome.detail
+
+
+def test_a_run_cannot_claim_success_the_launcher_log_denies(cassette: Path) -> None:
+    """Success is the one fact the verdict turns on — a pair counts only when both arms
+    succeeded. Recording exit codes rather than a bare count is what makes it re-derivable
+    instead of an assertion by whoever built the cassette."""
+    failed = encode_json(LauncherRecord(exit_codes=(0, 1)).model_dump(mode="json"))
+    _rewrite(cassette, "r1.tests.json", failed, fix_digest=True)
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert "launcher log" in outcome.detail
+
+
+def test_strict_promotes_a_reproduced_degraded_verdict(tmp_path: Path) -> None:
+    """Degraded data survives reproduction: the report matches, the verdict is simply built
+    on fewer components than planned. Folding that into EVIDENCE_REPRODUCED would make
+    `--strict` silently do nothing, which is worse than not offering the flag."""
+    equal_arms = (10, 1, 10)  # test cycles below the small-sample floor on both sides
+    degraded = _build(tmp_path / "degraded", baseline=equal_arms, candidate=equal_arms)
+
+    relaxed = verify_path(degraded)
+    assert relaxed.assessment is not None
+    assert relaxed.assessment.state is State.DEGRADED_DATA
+    assert relaxed.state is State.EVIDENCE_REPRODUCED
+    assert relaxed.exit_code == 0
+
+    strict = verify_path(degraded, strict=True)
+    assert strict.state is State.DEGRADED_DATA
+    assert strict.exit_code == 1
+
+
+def test_an_oversized_file_is_refused_before_it_is_read(cassette: Path) -> None:
+    """A cassette is fetched from a pull request and read wholly into memory to be hashed.
+    Without a ceiling, a large enough file kills the verifier before a single digest is
+    checked — which turns hostile evidence into a dead process rather than into exit 2."""
+    from morrow.adapters.cassette.store import MAX_FILE_BYTES
+
+    (cassette / "r1.events.jsonl").write_bytes(b"x" * (MAX_FILE_BYTES + 1))
+    outcome = verify_path(cassette)
+    assert outcome.state is State.INFRASTRUCTURE_ERROR
+    assert outcome.exit_code == 2
 
 
 # The cassettes committed under ``cassettes/`` are covered separately, in

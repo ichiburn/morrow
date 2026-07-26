@@ -57,7 +57,7 @@ class RunEvidence:
         )
         return {
             ComponentName.FILES_READ_DISTINCT: float(files_read),
-            ComponentName.TEST_CYCLES: float(self.tests.launcher_invocations),
+            ComponentName.TEST_CYCLES: float(self.tests.invocations),
             ComponentName.FINAL_CHURN: float(self.churn.total_lines),
         }
 
@@ -82,15 +82,47 @@ def parse_manifest(payload: bytes) -> Manifest | str:
         return f"manifest does not match the cassette schema: {error.error_count()} error(s)"
 
 
-def check_digests(manifest: Manifest, files: Mapping[str, bytes]) -> EvidenceError | None:
-    """Step 1 and part of §5.1: the file set matches, and every digest matches.
+def expected_files(manifest: Manifest) -> set[str]:
+    """Exactly the files a cassette is allowed to contain.
 
-    The set comparison comes first. A cassette carrying an unlisted file is incomplete
-    evidence, not corrupt evidence — the manifest is supposed to enumerate everything, and
-    a file nobody vouched for is exactly what an unlisted one is.
+    Derived from ``runs[].files`` plus the two report surfaces, never from the digest
+    table. Taking it from the digests would make the rule circular: anything at all
+    becomes permitted by listing its digest, and a cassette could then ship a ``notes.txt``
+    full of real paths and shell bodies while still verifying. The point of a closed
+    artifact is that its contents follow from its structure.
+
+    Every attempt contributes, not only adopted ones — a retried run's evidence is retained
+    on purpose (§5.1).
     """
+    names = {REPORT_JSON_NAME, REPORT_MARKDOWN_NAME}
+    for entry in manifest.runs:
+        names.update({entry.files.events, entry.files.churn, entry.files.tests})
+    return names
+
+
+def check_digests(manifest: Manifest, files: Mapping[str, bytes]) -> EvidenceError | None:
+    """Step 1 and part of §5.1: the file set is exactly right, and every digest matches.
+
+    Three sets have to agree: what the manifest's structure implies, what its digest table
+    vouches for, and what is on disk. A file present in any one of them but not the others
+    is incomplete evidence — the manifest is supposed to enumerate everything, and a file
+    nobody vouched for is exactly what an unlisted one is.
+    """
+    allowed = expected_files(manifest)
     listed = set(manifest.digests)
     present = set(files)
+
+    if listed != allowed:
+        undeclared = sorted(listed - allowed)
+        unvouched = sorted(allowed - listed)
+        return EvidenceError(
+            state=State.EVIDENCE_INCOMPLETE,
+            detail=(
+                f"digest table does not match the manifest's own structure "
+                f"(not declared by any run or report: {undeclared}, missing a digest: "
+                f"{unvouched})"
+            ),
+        )
     if listed != present:
         missing = sorted(listed - present)
         unlisted = sorted(present - listed)
@@ -105,12 +137,6 @@ def check_digests(manifest: Manifest, files: Mapping[str, bytes]) -> EvidenceErr
         if digest_of(files[name]) != manifest.digests[name]:
             return EvidenceError(
                 state=State.CASSETTE_CORRUPTED, detail=f"digest mismatch for {name}"
-            )
-    for required in (REPORT_JSON_NAME, REPORT_MARKDOWN_NAME):
-        if required not in listed:
-            return EvidenceError(
-                state=State.EVIDENCE_INCOMPLETE,
-                detail=f"cassette does not carry {required}",
             )
     return None
 
@@ -223,6 +249,19 @@ def check_run_invariants(run: RunEvidence, policy: Policy) -> EvidenceError | No
             ),
         )
 
+    # The manifest's success flag has to follow from the launcher log, not stand beside it.
+    # This is the single fact the whole verdict turns on — a pair counts only when both
+    # arms succeeded — so a cassette must not be able to simply assert it.
+    expected_status = RunStatus.OK if run.tests.acceptance_passed else RunStatus.FAILED
+    if entry.status is not expected_status:
+        return EvidenceError(
+            state=State.EVIDENCE_INVALID,
+            detail=(
+                f"run {entry.run_id}: manifest says {entry.status.value}, but the launcher "
+                f"log says {expected_status.value}"
+            ),
+        )
+
     commands = [event for event in events if event.kind is EventKind.COMMAND]
     unclassifiable = sum(1 for c in commands if c.purpose is CommandPurpose.UNCLASSIFIABLE)
     if unclassifiable:
@@ -255,6 +294,28 @@ def check_pair_structure(manifest: Manifest) -> EvidenceError | None:
                 detail=f"duplicate attempt for pair {entry.pair_id} {entry.variant.value}",
             )
         seen.add(key)
+
+    # One recording must not back two arms. Without this, a manifest could point pair 0 and
+    # pair 1 at the same three files, pass every digest and every per-run invariant, and
+    # reach `minimum_valid_pairs` on a single run duplicated — a verdict re-derived from
+    # fabricated repetition. Uniqueness is checked on both the run id and the files, since
+    # either alone can be made to look distinct.
+    seen_run_ids: set[str] = set()
+    seen_files: set[str] = set()
+    for entry in manifest.adopted_runs:
+        if entry.run_id in seen_run_ids:
+            return EvidenceError(
+                state=State.EVIDENCE_INVALID,
+                detail=f"run {entry.run_id} is adopted for more than one arm",
+            )
+        seen_run_ids.add(entry.run_id)
+        for name in (entry.files.events, entry.files.churn, entry.files.tests):
+            if name in seen_files:
+                return EvidenceError(
+                    state=State.EVIDENCE_INVALID,
+                    detail=f"{name} backs more than one adopted run",
+                )
+            seen_files.add(name)
 
     by_pair: dict[int, dict[Variant, int]] = {}
     for entry in manifest.adopted_runs:
