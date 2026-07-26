@@ -102,10 +102,33 @@ def test_churn_separates_under_either_arm_ordering() -> None:
     assert min(treatment_ratios) > max(null_ratios)
 
 
-def test_gate_blocks_on_a_null_control_that_is_pure_noise() -> None:
-    """Two identical trees, and the gate blocks. That is the honest reading of the
-    aggregate: at this sample size the noise floor reaches past the threshold, which is
-    why the README does not claim the aggregate separates."""
+def test_gate_will_not_decide_on_a_two_pair_experiment() -> None:
+    """The null controls ran two pairs, and the published floor is three.
+
+    `gate` compares the deciding fields of a cassette's policy — including the sample-size
+    floors — against the evaluator's, so a cassette cannot lower the bar it is measured
+    against. A two-pair experiment is therefore not something the gate decides on, however
+    interesting its numbers are.
+    """
     outcome = verify_path(PUBLISHED / "null-control-arms-swapped", mode=Mode.GATE)
+    assert outcome.state is State.GATE_PRECONDITION_UNMET
+    assert outcome.exit_code == 2
+
+
+def test_the_swapped_null_would_block_at_its_own_sample_size() -> None:
+    """The finding itself, shown without pretending it passed the gate's preconditions.
+
+    Two identical trees, and evaluated under the sample size it actually ran at, the
+    verdict is a friction regression that would block a build. That is the honest reading
+    of the aggregate: the noise floor reaches past the threshold, which is exactly why the
+    README does not claim the aggregate separates.
+    """
+    recorded = verify_path(PUBLISHED / "null-control-arms-swapped")
+    assert recorded.manifest is not None
+    outcome = verify_path(
+        PUBLISHED / "null-control-arms-swapped",
+        mode=Mode.GATE,
+        evaluator_policy=recorded.manifest.policy,
+    )
     assert outcome.state is State.FRICTION_REGRESSION
     assert outcome.exit_code == 1
