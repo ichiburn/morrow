@@ -206,17 +206,23 @@ def verify_bytes(
         if error is not None:
             return _fail(mode, error, strict=strict, manifest=manifest)
 
-    runs: list[RunEvidence] = []
-    for entry in manifest.adopted_runs:
+    # Every run is parsed and checked, not only the adopted ones. The file set a cassette
+    # may contain is derived from ``runs[].files``, so a run entry nobody adopted would
+    # otherwise be a way to admit an arbitrary file — declared by a discarded attempt,
+    # never parsed, never validated, and published all the same. Retained attempts are
+    # evidence too (§5.1); only their metrics are excluded.
+    adopted: list[RunEvidence] = []
+    for entry in manifest.runs:
         parsed_run = parse_run(entry, cassette.files)
         if isinstance(parsed_run, EvidenceError):
             return _fail(mode, parsed_run, strict=strict, manifest=manifest)
         invariant_error = check_run_invariants(parsed_run, policy)
         if invariant_error is not None:
             return _fail(mode, invariant_error, strict=strict, manifest=manifest)
-        runs.append(parsed_run)
+        if entry.adopted:
+            adopted.append(parsed_run)
 
-    experiment = validate_experiment(build_pairs(runs), policy)
+    experiment = validate_experiment(build_pairs(adopted), policy)
     if isinstance(experiment, EvidenceError):
         return _fail(mode, experiment, strict=strict, manifest=manifest)
 

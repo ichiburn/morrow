@@ -188,8 +188,9 @@ is the outcome it was built to be able to report.)*
 
 ```bash
 uv sync --all-groups --locked
-uv run morrow verify cassettes/treatment-replace-cache   # exits 2, as CI asserts
-uv run morrow gate   cassettes/null-control-arms-swapped # exits 1 on the friction finding
+uv run morrow verify cassettes/treatment-replace-cache     # exits 2, as CI asserts
+uv run morrow verify cassettes/null-control-arms-swapped   # exits 0: reproduced
+uv run morrow gate   cassettes/null-control-arms-swapped   # exits 2: two pairs, floor is three
 ```
 
 `verify` reads only the cassette. It checks every digest, parses every event under the
@@ -199,10 +200,17 @@ compares them byte-for-byte. Nothing in the recorded report's *contents* is an i
 that decision.
 
 `gate` runs the same steps but stops before the report comparison, and it will not decide
-under a policy the cassette supplied: the thresholds and metric parameters have to match
-the evaluator's own, or it returns `GATE_PRECONDITION_UNMET`. **A candidate does not get
-to choose the bar it is measured against.** Sample sizes are exempt from that comparison —
-how many pairs a recording managed is a property of the recording, not of the rule.
+under a policy the cassette supplied: the thresholds, the metric parameters **and the
+sample-size floors** have to match the evaluator's own, or it returns
+`GATE_PRECONDITION_UNMET`. **A candidate does not get to choose the bar it is measured
+against** — including by declaring that one pair is enough. Only `runs_per_variant` is
+exempt, because that is how many pairs were planned rather than how many the decision
+requires.
+
+This is why `gate` on either null control exits 2 rather than 1: they ran two pairs and the
+published floor is three. Their numbers are still readable — `verify` reproduces them, and
+the swapped ordering does produce a friction verdict when evaluated at the sample size it
+actually ran at. It is just not a verdict the gate is entitled to issue.
 
 Two caveats worth stating rather than discovering:
 
