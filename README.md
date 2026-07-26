@@ -57,7 +57,7 @@ candidate actually turns out to cost more is a *result*, and results are reporte
 | # | Not claimed | Why |
 |---|---|---|
 | C5 | Safe execution against untrusted repositories | No OS-level isolation is implemented. **MORROW runs only against trusted repositories.** |
-| C6 | Statistical significance | At K paired runs the lower bound on a one-sided sign test is 2⁻ᴷ — 1/8 = 0.125 for the three pairs recorded here. This **cannot** be claimed |
+| C6 | Statistical significance | At the sample sizes here a one-sided sign test cannot reach it: over three compared pairs its p floor is 2⁻³ = 0.125. At larger K the floor drops below 0.05 and that argument stops applying — but significance is still not claimed, because one recording session on one model does not supply the independence such a test assumes. The report states whichever of the two is true for its K |
 | C7 | Tamper resistance of the evidence | There is no signing and no provenance. The hashes detect **accidental corruption**, nothing more |
 | C8 | Robustness against an adversarial agent | These are proxy metrics valid under a fixed provider, model, and prompt |
 
@@ -195,7 +195,27 @@ uv run morrow gate   cassettes/null-control-arms-swapped # exits 1 on the fricti
 `verify` reads only the cassette. It checks every digest, parses every event under the
 closed schema, recomputes the metrics from the events and the churn records, recomputes
 the verdict with the policy embedded in the manifest, regenerates both report surfaces and
-compares them byte-for-byte. Nothing in the recorded report is an input to that decision.
+compares them byte-for-byte. Nothing in the recorded report's *contents* is an input to
+that decision.
+
+`gate` runs the same steps but stops before the report comparison, and it will not decide
+under a policy the cassette supplied: the thresholds and metric parameters have to match
+the evaluator's own, or it returns `GATE_PRECONDITION_UNMET`. **A candidate does not get
+to choose the bar it is measured against.** Sample sizes are exempt from that comparison —
+how many pairs a recording managed is a property of the recording, not of the rule.
+
+Two caveats worth stating rather than discovering:
+
+- **Reproduction is claimed within a platform, not across all of them.** An FFR is
+  `exp(Σ w·ln r / Σ w)`, and `log`/`exp` may differ in the last bit between C libraries, so
+  a byte comparison on a different platform could report `EVIDENCE_STALE` for a
+  reproduction that is arithmetically correct. The verdict itself is unaffected: threshold
+  comparisons go through `Decimal` with an epsilon.
+- **A cassette is untrusted input.** It is read with limits on file size, total size and
+  file count, symlinks are refused, and the set of files it may contain is derived from
+  the manifest's own structure rather than from its digest table. What is *not* claimed is
+  tamper resistance (C7) — the digests detect accidental corruption, and recomputation
+  detects a report that no longer follows from its evidence, but neither is a signature.
 
 ---
 
