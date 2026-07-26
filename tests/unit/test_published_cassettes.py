@@ -115,20 +115,18 @@ def test_gate_will_not_decide_on_a_two_pair_experiment() -> None:
     assert outcome.exit_code == 2
 
 
-def test_the_swapped_null_would_block_at_its_own_sample_size() -> None:
-    """The finding itself, shown without pretending it passed the gate's preconditions.
+def test_the_swapped_null_reaches_a_friction_verdict_on_zero_difference() -> None:
+    """Two identical trees, and the re-derived verdict is a friction regression.
 
-    Two identical trees, and evaluated under the sample size it actually ran at, the
-    verdict is a friction regression that would block a build. That is the honest reading
-    of the aggregate: the noise floor reaches past the threshold, which is exactly why the
-    README does not claim the aggregate separates.
+    This is what "the aggregate does not separate" rests on: at this sample size the noise
+    floor reaches past the published threshold, so the same rule that would flag a real
+    regression also flags a comparison of a tree against itself.
+
+    The gate will not act on it — see the test above — but the verdict is a property of the
+    evidence, not of whether anything chose to enforce it.
     """
-    recorded = verify_path(PUBLISHED / "null-control-arms-swapped")
-    assert recorded.manifest is not None
-    outcome = verify_path(
-        PUBLISHED / "null-control-arms-swapped",
-        mode=Mode.GATE,
-        evaluator_policy=recorded.manifest.policy,
-    )
-    assert outcome.state is State.FRICTION_REGRESSION
-    assert outcome.exit_code == 1
+    outcome = verify_path(PUBLISHED / "null-control-arms-swapped")
+    assert outcome.assessment is not None
+    assert outcome.assessment.state is State.FRICTION_REGRESSION
+    assert outcome.assessment.ffr_gate is not None
+    assert outcome.assessment.ffr_gate > outcome.manifest.policy.decision.friction_threshold  # type: ignore[union-attr]

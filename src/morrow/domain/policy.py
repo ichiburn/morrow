@@ -210,6 +210,9 @@ def evaluator_fingerprint(policy: Policy) -> tuple[object, ...]:
         policy.experiment.minimum_valid_pairs,
         policy.experiment.minimum_ffr_pairs,
         policy.experiment.minimum_baseline_successes,
+        # The retry cap decides too: raising it turns "repeat a failed pair" into
+        # "keep running until a cheap result appears, then adopt that one".
+        policy.experiment.max_pair_retries,
     )
 
 

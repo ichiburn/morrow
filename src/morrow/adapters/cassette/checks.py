@@ -74,8 +74,12 @@ def parse_manifest(payload: bytes) -> Manifest | str:
     """
     try:
         decoded = json.loads(payload.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
-        return f"manifest is not valid JSON: {error}"
+    except (UnicodeDecodeError, ValueError, RecursionError) as error:
+        # Deliberately wider than JSONDecodeError. An integer literal past
+        # ``sys.int_max_str_digits`` raises a plain ValueError, and deeply nested brackets
+        # raise RecursionError — neither is a decode error, and both would otherwise leave
+        # the CLI exiting on a traceback instead of on a state.
+        return f"manifest is not valid JSON: {type(error).__name__}"
     try:
         return Manifest.model_validate(decoded)
     except ValidationError as error:
@@ -226,8 +230,23 @@ def check_run_invariants(run: RunEvidence, policy: Policy) -> EvidenceError | No
         )
 
     completions = [event for event in events if event.kind is EventKind.COMPLETION]
-    # Only a run the evaluator marked completed is required to carry a completion event;
-    # one killed at the wall clock legitimately has none (§5.1).
+    # A completion event is what proves the stream was not cut short. `seq` only proves the
+    # events present are contiguous, so lopping off the tail and renumbering passes it —
+    # and a shorter trajectory is a cheaper one. `terminal_status` is a manifest assertion,
+    # so requiring the event only when it says "completed" would let a cassette excuse its
+    # own truncation by writing "timeout" instead.
+    #
+    # An adopted run therefore always needs exactly one. A run that genuinely timed out is
+    # still allowed in the cassette — retained attempts are evidence (§5.1) — it just
+    # cannot be the one whose metrics feed the verdict.
+    if entry.adopted and len(completions) != 1:
+        return EvidenceError(
+            state=State.EVIDENCE_INCOMPLETE,
+            detail=(
+                f"run {entry.run_id}: adopted runs must carry exactly one completion "
+                f"event; found {len(completions)}"
+            ),
+        )
     if entry.terminal_status is TerminalStatus.COMPLETED and len(completions) != 1:
         return EvidenceError(
             state=State.EVIDENCE_INCOMPLETE,
@@ -235,6 +254,32 @@ def check_run_invariants(run: RunEvidence, policy: Policy) -> EvidenceError | No
                 f"run {entry.run_id}: terminal status is completed but the stream carries "
                 f"{len(completions)} completion event(s)"
             ),
+        )
+    if entry.adopted and entry.terminal_status is not TerminalStatus.COMPLETED:
+        return EvidenceError(
+            state=State.EVIDENCE_INVALID,
+            detail=(
+                f"run {entry.run_id}: adopted but terminal status is "
+                f"'{entry.terminal_status.value}'"
+            ),
+        )
+
+    # The launcher log is the primary source for `test_cycles`, and nothing else was
+    # checking it against the stream. Shortening `exit_codes` lowers the component directly
+    # while leaving the test events in place for anyone who bothered to look.
+    test_events = [event for event in events if event.kind is EventKind.TEST]
+    if len(test_events) != run.tests.invocations:
+        return EvidenceError(
+            state=State.EVIDENCE_INVALID,
+            detail=(
+                f"run {entry.run_id}: the launcher log records {run.tests.invocations} "
+                f"invocation(s) but the stream carries {len(test_events)} test event(s)"
+            ),
+        )
+    if sorted(event.launcher_seq for event in test_events) != list(range(len(test_events))):
+        return EvidenceError(
+            state=State.EVIDENCE_INVALID,
+            detail=f"run {entry.run_id}: test events do not index the launcher log 0..n-1",
         )
 
     unpaired = sum(
@@ -283,9 +328,10 @@ def check_run_invariants(run: RunEvidence, policy: Policy) -> EvidenceError | No
     return None
 
 
-def check_pair_structure(manifest: Manifest) -> EvidenceError | None:
-    """The experiment-level checks of §5: attempts are unique, adoption is exactly one."""
+def check_pair_structure(manifest: Manifest, policy: Policy) -> EvidenceError | None:
+    """The experiment-level checks of §5: attempts are unique, bounded, and adopted once."""
     seen: set[tuple[int, Variant, int]] = set()
+    highest_attempt: dict[tuple[int, Variant], int] = {}
     for entry in manifest.runs:
         key = (entry.pair_id, entry.variant, entry.attempt_index)
         if key in seen:
@@ -294,6 +340,22 @@ def check_pair_structure(manifest: Manifest) -> EvidenceError | None:
                 detail=f"duplicate attempt for pair {entry.pair_id} {entry.variant.value}",
             )
         seen.add(key)
+        arm = (entry.pair_id, entry.variant)
+        highest_attempt[arm] = max(highest_attempt.get(arm, 0), entry.attempt_index)
+
+    # Retries are capped, and the cap is enforced here rather than only at record time.
+    # Without it an arm can be run any number of times and the cheapest attempt adopted:
+    # every run is genuine, every invariant holds, and the metric is still chosen after the
+    # fact. That is best-of-N dressed as a retry policy, and it defeats pre-registration.
+    for (pair_id, variant), attempts in sorted(highest_attempt.items()):
+        if attempts > policy.experiment.max_pair_retries:
+            return EvidenceError(
+                state=State.EVIDENCE_INVALID,
+                detail=(
+                    f"pair {pair_id} {variant.value} records attempt {attempts}, over the "
+                    f"retry cap of {policy.experiment.max_pair_retries}"
+                ),
+            )
 
     # One recording must not back two arms. Without this, a manifest could point pair 0 and
     # pair 1 at the same three files, pass every digest and every per-run invariant, and

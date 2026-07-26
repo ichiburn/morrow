@@ -18,6 +18,7 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -108,45 +109,49 @@ def read_cassette(root: Path) -> CassetteBytes:
     if not root.is_dir():
         raise CassetteReadError(f"not a cassette directory: {root}")
 
-    entries = sorted(root.iterdir())
-    if len(entries) > MAX_FILE_COUNT:
-        raise CassetteReadError(
-            f"cassette holds {len(entries)} entries, over the limit of {MAX_FILE_COUNT}"
-        )
-
     files: dict[str, bytes] = {}
     manifest_bytes: bytes | None = None
     total = 0
-    for entry in entries:
-        if entry.is_symlink():
-            raise CassetteReadError(f"symlink in cassette: {entry.name}")
-        if not entry.is_file():
-            raise CassetteReadError(f"not a regular file in cassette: {entry.name}")
-        # Size is checked before the read, so an oversized file is refused rather than
-        # loaded and then complained about.
-        size = entry.stat().st_size
-        if size > MAX_FILE_BYTES:
-            raise CassetteReadError(
-                f"{entry.name} is {size} bytes, over the per-file limit of {MAX_FILE_BYTES}"
-            )
-        total += size
-        if total > MAX_TOTAL_BYTES:
-            raise CassetteReadError(
-                f"cassette exceeds the total size limit of {MAX_TOTAL_BYTES} bytes"
-            )
-        try:
+    # Every filesystem call below can fail on a directory an attacker is also writing to.
+    # An OSError escaping here would leave the CLI exiting on a traceback rather than on a
+    # state, so the whole walk is converted at the boundary.
+    try:
+        # Only one entry past the limit is taken: materialising a directory of millions of
+        # names costs memory before the count can even be rejected.
+        entries = sorted(islice(root.iterdir(), MAX_FILE_COUNT + 1))
+        if len(entries) > MAX_FILE_COUNT:
+            raise CassetteReadError(f"cassette holds more than {MAX_FILE_COUNT} entries")
+
+        for entry in entries:
+            name = entry.name
+            if entry.is_symlink():
+                raise CassetteReadError(f"symlink in cassette: {name!r}")
+            if not entry.is_file():
+                raise CassetteReadError(f"not a regular file in cassette: {name!r}")
+            # Size is checked before the read, so an oversized file is refused rather than
+            # loaded and then complained about.
+            size = entry.stat().st_size
+            if size > MAX_FILE_BYTES:
+                raise CassetteReadError(
+                    f"{name!r} is {size} bytes, over the per-file limit of {MAX_FILE_BYTES}"
+                )
+            total += size
+            if total > MAX_TOTAL_BYTES:
+                raise CassetteReadError(
+                    f"cassette exceeds the total size limit of {MAX_TOTAL_BYTES} bytes"
+                )
             payload = entry.read_bytes()
-        except OSError as error:  # unreadable file, permissions, device
-            raise CassetteReadError(f"cannot read {entry.name}: {error}") from error
-        # The file could have been swapped between the stat and the read. Re-checking the
-        # length closes the window for growth; a same-size substitution is caught by the
-        # digest a step later.
-        if len(payload) > MAX_FILE_BYTES:
-            raise CassetteReadError(f"{entry.name} grew past the per-file limit while reading")
-        if entry.name == MANIFEST_NAME:
-            manifest_bytes = payload
-        else:
-            files[entry.name] = payload
+            # The file could have been swapped between the stat and the read. Re-checking
+            # the length closes the window for growth; a same-size substitution is caught
+            # by the digest a step later.
+            if len(payload) > MAX_FILE_BYTES:
+                raise CassetteReadError(f"{name!r} grew past the per-file limit while reading")
+            if name == MANIFEST_NAME:
+                manifest_bytes = payload
+            else:
+                files[name] = payload
+    except OSError as error:
+        raise CassetteReadError(f"cannot read the cassette: {error}") from error
 
     if manifest_bytes is None:
         raise CassetteReadError(f"cassette has no {MANIFEST_NAME}: {root}")
