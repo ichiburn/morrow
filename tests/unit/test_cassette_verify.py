@@ -286,7 +286,10 @@ def test_untouched_cassette_reproduces(cassette: Path) -> None:
 
 
 def test_gate_blocks_on_the_recomputed_friction_finding(cassette: Path) -> None:
-    outcome = verify_path(cassette, mode=Mode.GATE)
+    # The fixture runs two pairs, so its sample-size floors are lower than the published
+    # ones; it is handed its own policy as the evaluator's. What is under test here is the
+    # blocking behaviour, not the policy comparison — that has its own test below.
+    outcome = verify_path(cassette, mode=Mode.GATE, evaluator_policy=_policy())
     assert outcome.state is State.FRICTION_REGRESSION
     assert outcome.exit_code == 1
 
@@ -302,7 +305,7 @@ def test_the_recorded_report_calls_the_same_finding_advisory(cassette: Path) -> 
     assert "# MORROW — PASS" in recorded
     assert "| Advisory | yes |" in recorded
     assert "`FRICTION_REGRESSION`" in recorded
-    assert verify_path(cassette, mode=Mode.GATE).exit_code == 1
+    assert verify_path(cassette, mode=Mode.GATE, evaluator_policy=_policy()).exit_code == 1
 
 
 # --- step 1: digests --------------------------------------------------------------
@@ -449,7 +452,7 @@ def test_gate_ignores_the_recorded_report_entirely(cassette: Path) -> None:
         b"`FRICTION_REGRESSION`", b"`OK`                 "
     )
     _rewrite(cassette, REPORT_MARKDOWN_NAME, doctored, fix_digest=True)
-    outcome = verify_path(cassette, mode=Mode.GATE)
+    outcome = verify_path(cassette, mode=Mode.GATE, evaluator_policy=_policy())
     assert outcome.state is State.FRICTION_REGRESSION
     assert outcome.exit_code == 1
 

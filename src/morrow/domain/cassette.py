@@ -236,7 +236,9 @@ class Manifest(BaseModel):
     #: the report's own header, so regenerating without it would fail the byte comparison.
     recorded_strict: bool = False
     policy: Policy
-    runs: tuple[RunEntry, ...]
+    #: Bounded: retries append entries, but a manifest is a record of an experiment, not
+    #: an arbitrarily long list a reader has to process before it can be rejected.
+    runs: Annotated[tuple[RunEntry, ...], Field(max_length=1024)]
     #: file name -> SHA-256 of its bytes. Covers every file in the cassette except the
     #: manifest itself, including the two report surfaces.
     digests: Mapping[FileName, Digest]

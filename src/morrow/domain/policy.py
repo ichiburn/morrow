@@ -53,7 +53,9 @@ _DEFAULT_CHURN_EXCLUDE: tuple[str, ...] = (
 class ExperimentPolicy(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    runs_per_variant: PositiveInt = 4  # = pair count K
+    #: Bounded above as well as below. K reaches the report, and an unbounded one lets a
+    #: manifest ask for arithmetic on a number nobody intended to compute.
+    runs_per_variant: Annotated[int, Field(ge=1, le=1024)] = 4  # = pair count K
     minimum_valid_pairs: PositiveInt = 3
     minimum_ffr_pairs: PositiveInt = 3
     minimum_baseline_successes: PositiveInt = 2
@@ -200,6 +202,14 @@ def evaluator_fingerprint(policy: Policy) -> tuple[object, ...]:
         policy.metrics.churn_exclude,
         policy.numeric.epsilon,
         policy.evidence.max_unpaired_tool_uses,
+        # The sample-size *floors* decide too, and lowering them is the cheapest way to
+        # buy a verdict: `minimum_valid_pairs=1` turns a single pair into a result, and
+        # `minimum_baseline_successes=1` accepts a baseline that was never established.
+        # ``runs_per_variant`` is excluded on purpose — that is how many pairs were
+        # planned, and the floors are what actually gate the decision.
+        policy.experiment.minimum_valid_pairs,
+        policy.experiment.minimum_ffr_pairs,
+        policy.experiment.minimum_baseline_successes,
     )
 
 
