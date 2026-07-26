@@ -847,6 +847,53 @@ def test_two_test_events_cannot_share_a_launcher_index(cassette: Path) -> None:
     assert "index the launcher log" in outcome.detail
 
 
+def _extra_attempt(manifest: dict, **overrides: object) -> None:
+    """Append a second attempt for r1, copying the first and applying overrides."""
+    template = next(run for run in manifest["runs"] if run["run_id"] == "r1")
+    manifest["runs"].append({**template, "attempt_index": 1, "adopted": False, **overrides})
+
+
+def test_a_completed_attempt_cannot_be_discarded(cassette: Path) -> None:
+    """Within the retry cap, running an arm twice and keeping the cheaper result is still
+    choosing the metric after the fact. A discarded attempt has to be one that failed."""
+    _patch_manifest(cassette, _extra_attempt)
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert "discarded rather than adopted" in outcome.detail
+
+
+def test_a_discarded_run_cannot_be_relabelled_as_crashed(cassette: Path) -> None:
+    """...and the rule above keys on `terminal_status`, which is a manifest assertion.
+
+    Calling a run that plainly finished "crashed" would make it discardable and bring
+    best-of-N back through the label. The stream's own account of how the run ended is the
+    part that cannot be relabelled.
+    """
+    _patch_manifest(cassette, lambda m: _extra_attempt(m, terminal_status="crashed"))
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert "completion event says the run finished" in outcome.detail
+
+
+def test_a_pair_cannot_be_left_unaccounted_for(cassette: Path) -> None:
+    """A pair whose numbers came out inconvenient could otherwise be left unadopted and
+    unlisted: it drops out of the experiment without appearing in the attempted total or
+    anywhere else, and the verdict is re-derived from what remains."""
+
+    def orphan_the_second_pair(manifest: dict) -> None:
+        for run in manifest["runs"]:
+            if run["pair_id"] == 1:
+                run["adopted"] = False
+                # Also drop the completion, so the run is discardable and this test
+                # reaches the accounting check rather than the completed-discard one.
+                run["terminal_status"] = "timeout"
+
+    _patch_manifest(cassette, orphan_the_second_pair)
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INCOMPLETE
+    assert "neither adopted nor declared invalid" in outcome.detail
+
+
 def test_an_oversized_file_is_refused_before_it_is_read(cassette: Path) -> None:
     """A cassette is fetched from a pull request and read wholly into memory to be hashed.
     Without a ceiling, a large enough file kills the verifier before a single digest is

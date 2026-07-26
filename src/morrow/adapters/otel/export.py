@@ -49,7 +49,11 @@ class RunTelemetry:
     attempt_index: int
     adopted: bool
     terminal_status: str
-    wall_duration_ms: int
+    #: ``None`` when the run is being replayed from a cassette. Wall time is not part of
+    #: the published evidence — it is a property of the machine that recorded it, not of
+    #: the work the task required — so a replay has none to report. Exporting a zero would
+    #: put a number on a dashboard that nobody measured.
+    wall_duration_ms: int | None
     events: Sequence[AgentEvent]
     files_read_distinct: int
     test_cycles: int
@@ -133,7 +137,8 @@ def _export_run(tracer: trace.Tracer, experiment: ExperimentTelemetry, run: RunT
         span.set_attribute("morrow.run.attempt_index", run.attempt_index)
         span.set_attribute("morrow.run.adopted", run.adopted)
         span.set_attribute("morrow.run.terminal_status", run.terminal_status)
-        span.set_attribute("morrow.run.wall_duration_ms", run.wall_duration_ms)
+        if run.wall_duration_ms is not None:
+            span.set_attribute("morrow.run.wall_duration_ms", run.wall_duration_ms)
         span.set_attribute("morrow.metric.files_read_distinct", run.files_read_distinct)
         span.set_attribute("morrow.metric.test_cycles", run.test_cycles)
         span.set_attribute("morrow.metric.final_churn", run.final_churn)
