@@ -517,11 +517,19 @@ def test_gate_refuses_a_policy_the_candidate_chose(cassette: Path) -> None:
         manifest["policy"]["decision"]["component_hard_max"] = 9.0
         manifest["policy"]["metrics"]["clamp_ratio"] = 10.0
 
+    # The fixture's own policy is handed in as the evaluator's, so the *only* difference
+    # between the two is the thresholds this test raises. Without that, the fixture's
+    # sample-size floors already differ from the published ones and the assertion would
+    # pass even if the thresholds were dropped from the comparison entirely.
+    baseline_policy = _policy()
+    assert verify_path(cassette, mode=Mode.GATE, evaluator_policy=baseline_policy).state is (
+        State.FRICTION_REGRESSION
+    ), "the fixture must pass the policy check before the thresholds are altered"
+
     _patch_manifest(cassette, raise_thresholds)
-    # The report no longer follows from the altered policy, so verify stops at step 5;
-    # what matters here is that gate refuses before it ever computes a verdict.
-    assert verify_path(cassette, mode=Mode.GATE).state is State.GATE_PRECONDITION_UNMET
-    assert verify_path(cassette, mode=Mode.GATE).exit_code == 2
+    outcome = verify_path(cassette, mode=Mode.GATE, evaluator_policy=baseline_policy)
+    assert outcome.state is State.GATE_PRECONDITION_UNMET
+    assert outcome.exit_code == 2
 
 
 def test_a_treatment_without_a_null_control_is_incomplete(cassette: Path) -> None:
@@ -599,6 +607,74 @@ def test_strict_promotes_a_reproduced_degraded_verdict(tmp_path: Path) -> None:
     strict = verify_path(degraded, strict=True)
     assert strict.state is State.DEGRADED_DATA
     assert strict.exit_code == 1
+
+
+def test_an_unconvertible_churn_count_is_refused_not_crashed(cassette: Path) -> None:
+    """JSON integers have no width limit and Python's have no precision limit, so an
+    unbounded count reaches `float()` and raises OverflowError — the same "crash instead of
+    verdict" hole as a NaN, arriving through the integer side of the schema."""
+    huge = encode_json(
+        {
+            "added_lines": 10**400,
+            "deleted_lines": 0,
+            "files_added": 1,
+            "files_deleted": 0,
+            "files_modified": 0,
+            "binary_bytes_changed": 0,
+            "binary_files_changed": 0,
+        }
+    )
+    _rewrite(cassette, "r1.churn.json", huge, fix_digest=True)
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert outcome.exit_code == 2
+
+
+def test_a_discarded_attempt_cannot_smuggle_an_unchecked_file(cassette: Path) -> None:
+    """The allowed file set is derived from every run entry, including retried attempts.
+
+    A run nobody adopted would otherwise declare a file name, have it admitted by that
+    derivation, and never be parsed — published, vouched for by a digest, and validated by
+    nothing. Every run is checked; only the adopted ones contribute metrics.
+    """
+    payload = b"not an event stream at all\n"
+    (cassette / "r9.events.jsonl").write_bytes(payload)
+
+    def add_discarded_attempt(manifest: dict) -> None:
+        template = dict(manifest["runs"][0])
+        manifest["runs"].append(
+            {
+                **template,
+                "run_id": "r9",
+                "adopted": False,
+                "attempt_index": 1,
+                "files": {
+                    "events": "r9.events.jsonl",
+                    "churn": template["files"]["churn"],
+                    "tests": template["files"]["tests"],
+                },
+            }
+        )
+        manifest["digests"]["r9.events.jsonl"] = digest_of(payload)
+
+    _patch_manifest(cassette, add_discarded_attempt)
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert outcome.exit_code == 2
+
+
+def test_a_pair_cannot_be_both_invalidated_and_adopted(cassette: Path) -> None:
+    """Invalidated pairs are counted in the report's "attempted" total, so claiming a pair
+    on both sides inflates how much work the experiment appears to have done."""
+    _patch_manifest(
+        cassette,
+        lambda m: m.__setitem__(
+            "invalid_pairs", [{"pair_id": 0, "reason": "infrastructure_failure"}]
+        ),
+    )
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert "both invalidated and adopted" in outcome.detail
 
 
 def test_an_oversized_file_is_refused_before_it_is_read(cassette: Path) -> None:

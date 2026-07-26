@@ -121,6 +121,10 @@ def policy_for(pair_count: int) -> Policy:
     and the null two. Loosening a *threshold* to fit the data would invalidate the whole
     exercise; stating the sample size honestly is not the same act.
     """
+    if pair_count < 2:
+        raise SystemExit(
+            f"an experiment needs at least two pairs to establish a baseline; got {pair_count}"
+        )
     return Policy(
         experiment=ExperimentPolicy(
             runs_per_variant=pair_count,
@@ -269,10 +273,11 @@ def build(spec: ExperimentSpec, *, null_ffr_gate: float | None = None) -> Assess
 
     # Exactly the order ``verify`` applies, so the recorded verdict is the one a verifier
     # will re-derive. If the two disagreed, the cassette would fail its own verification.
+    # The same condition ``verify`` applies — "a null control that is present is checked",
+    # without the extra ``kind`` clause the builder used to carry. The two must agree, or a
+    # cassette can be recorded under one rule and judged under another.
     null_error = (
-        check_null_control(null_ffr_gate, policy)
-        if spec.kind is ExperimentKind.TREATMENT and null_ffr_gate is not None
-        else None
+        check_null_control(null_ffr_gate, policy) if null_ffr_gate is not None else None
     )
     assessment = (
         invalidated_experiment(experiment, null_error)
