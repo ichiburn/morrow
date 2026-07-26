@@ -264,16 +264,19 @@ def verify_bytes(
     # verdict (§3.8), so the rejection replaces the assessment instead of short-circuiting
     # past the report: "the experiment was invalidated" is a result a reader is entitled to
     # see rendered.
-    null_error = (
-        check_null_control(manifest.null_control_ffr_gate, policy)
-        if manifest.null_control_ffr_gate is not None
-        else None
+    assessment = evaluate_policy(experiment, policy)
+    null_ffr = (
+        # A null control is judged on the number it just produced, not on one it was told.
+        # Without this the tolerance band is only ever applied to a treatment's *recorded*
+        # figure — so a null that actually drifted out of band still verifies clean, and
+        # the reader who was invited to recompute it gets a green result either way.
+        assessment.ffr_gate
+        if manifest.kind is ExperimentKind.NULL_CONTROL
+        else manifest.null_control_ffr_gate
     )
-    assessment = (
-        invalidated_experiment(experiment, null_error)
-        if null_error is not None
-        else evaluate_policy(experiment, policy)
-    )
+    null_error = check_null_control(null_ffr, policy) if null_ffr is not None else None
+    if null_error is not None:
+        assessment = invalidated_experiment(experiment, null_error)
     meta = report_meta(manifest)
 
     if mode is Mode.GATE:

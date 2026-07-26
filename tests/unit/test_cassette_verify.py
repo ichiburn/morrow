@@ -762,6 +762,91 @@ def test_an_arm_cannot_be_run_until_a_cheap_result_appears(cassette: Path) -> No
     assert "retry cap" in outcome.detail
 
 
+def test_the_completion_has_to_end_the_stream(cassette: Path) -> None:
+    """Counting completions only proves the stream stops somewhere after one. Deleting
+    everything past it and renumbering satisfies the count while still hiding work."""
+    lines = (cassette / "r1.events.jsonl").read_bytes().decode().splitlines()
+    completion = next(line for line in lines if '"completion"' in line)
+    others = [line for line in lines if line != completion]
+    reordered = [completion, *others]
+    renumbered = []
+    for seq, line in enumerate(reordered):
+        record = json.loads(line)
+        record["seq"] = seq
+        renumbered.append(json.dumps(record, sort_keys=True, separators=(",", ":")))
+    _rewrite(
+        cassette, "r1.events.jsonl", ("\n".join(renumbered) + "\n").encode(), fix_digest=True
+    )
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INCOMPLETE
+    assert "does not end with its completion" in outcome.detail
+
+
+def test_the_manifest_cannot_call_a_failed_run_completed(cassette: Path) -> None:
+    """`terminal_status` is the manifest's assertion; the completion event's
+    `terminal_reason` is the provider's account. An adopted run needs both to say the run
+    finished, or the assertion is doing work the evidence does not support."""
+    lines = (cassette / "r1.events.jsonl").read_bytes().decode().splitlines()
+    patched = []
+    for line in lines:
+        record = json.loads(line)
+        if record.get("kind") == "completion":
+            record["terminal_reason"] = "api_error"
+        patched.append(json.dumps(record, sort_keys=True, separators=(",", ":")))
+    _rewrite(cassette, "r1.events.jsonl", ("\n".join(patched) + "\n").encode(), fix_digest=True)
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert "completion event says" in outcome.detail
+
+
+def test_a_middle_attempt_cannot_be_quietly_dropped(cassette: Path) -> None:
+    """Capping the highest attempt index alone would let an inconvenient attempt in the
+    middle be deleted. How much work was actually done is part of what retaining an
+    attempt is for."""
+
+    def add_gapped_attempt(manifest: dict) -> None:
+        template = next(r for r in manifest["runs"] if r["run_id"] == "r1")
+        manifest["runs"].append({**template, "attempt_index": 2, "adopted": False})
+
+    _patch_manifest(cassette, add_gapped_attempt)
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert "missing an attempt" in outcome.detail
+
+
+def test_a_pair_cannot_be_invalidated_twice(cassette: Path) -> None:
+    """Each invalid pair is counted once in the report's attempted total."""
+    _patch_manifest(
+        cassette,
+        lambda m: m.__setitem__(
+            "invalid_pairs",
+            [
+                {"pair_id": 7, "reason": "infrastructure_failure"},
+                {"pair_id": 7, "reason": "retries_exhausted"},
+            ],
+        ),
+    )
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert "more than once" in outcome.detail
+
+
+def test_two_test_events_cannot_share_a_launcher_index(cassette: Path) -> None:
+    """The counts can match while the indices do not: two events both claiming launcher
+    run 0 leave one real invocation unaccounted for."""
+    lines = (cassette / "r1.events.jsonl").read_bytes().decode().splitlines()
+    patched = []
+    for line in lines:
+        record = json.loads(line)
+        if record.get("kind") == "test" and record["launcher_seq"] == 1:
+            record["launcher_seq"] = 0
+        patched.append(json.dumps(record, sort_keys=True, separators=(",", ":")))
+    _rewrite(cassette, "r1.events.jsonl", ("\n".join(patched) + "\n").encode(), fix_digest=True)
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert "index the launcher log" in outcome.detail
+
+
 def test_an_oversized_file_is_refused_before_it_is_read(cassette: Path) -> None:
     """A cassette is fetched from a pull request and read wholly into memory to be hashed.
     Without a ceiling, a large enough file kills the verifier before a single digest is

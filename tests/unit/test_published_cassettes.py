@@ -26,11 +26,12 @@ PUBLISHED = Path(__file__).resolve().parents[2] / "cassettes"
     ("name", "expected_state", "expected_exit"),
     [
         ("null-control-as-recorded", State.EVIDENCE_REPRODUCED, 0),
-        ("null-control-arms-swapped", State.EVIDENCE_REPRODUCED, 0),
-        # The treatment's null control sits outside its published band, so the
-        # pre-registered rule invalidates the experiment. Reproducing that faithfully is
-        # still exit 2 — "the instrument could not separate signal from noise" is a result,
-        # and it is not allowed to read as a pass.
+        # Both of these sit outside the published tolerance band, so the pre-registered
+        # rule invalidates them. Reproducing that faithfully is still exit 2 — "the
+        # instrument could not separate signal from noise" is a result, and it is not
+        # allowed to read as a pass. The swapped null fails on the figure it produced
+        # itself; the treatment on the figure it was handed from that null.
+        ("null-control-arms-swapped", State.INVALID_EXPERIMENT, 2),
         ("treatment-replace-cache", State.INVALID_EXPERIMENT, 2),
     ],
 )
@@ -52,16 +53,38 @@ def test_the_null_controls_disagree_by_arm_order() -> None:
     One-sided aggregation is not symmetric, so relabelling which clone is "baseline" moves
     the null's FFR from 1.0000 to 1.7403, across the 1.20 tolerance band. Both orderings
     are committed precisely so that neither can be the one picked after seeing the data.
+
+    The swapped ordering lands outside the band, so its own verdict is INVALID_EXPERIMENT
+    and carries no FFR — the figure survives in the reason it gives.
     """
     as_recorded = verify_path(PUBLISHED / "null-control-as-recorded")
     swapped = verify_path(PUBLISHED / "null-control-arms-swapped")
     assert as_recorded.assessment is not None
     assert swapped.assessment is not None
 
-    assert as_recorded.assessment.ffr_gate == pytest.approx(1.0, abs=1e-9)
-    assert swapped.assessment.ffr_gate == pytest.approx(1.7403, abs=5e-5)
     assert as_recorded.assessment.state is State.OK
-    assert swapped.assessment.state is State.FRICTION_REGRESSION
+    assert as_recorded.assessment.ffr_gate == pytest.approx(1.0, abs=1e-9)
+
+    assert swapped.assessment.state is State.INVALID_EXPERIMENT
+    assert "1.7403 exceeds maximum_ffr 1.2000" in swapped.detail
+
+
+def test_a_null_control_is_judged_on_the_figure_it_produced() -> None:
+    """A null control measures the noise floor, so the tolerance band applies to the number
+    it just produced — not only to whatever a treatment later claims that number was.
+
+    Without this the band would only ever be checked against a treatment's recorded figure,
+    and a null that actually drifted out of band would still verify clean. The reader
+    invited to recompute it would get a green result either way, which makes the invitation
+    worthless.
+    """
+    outcome = verify_path(PUBLISHED / "null-control-arms-swapped")
+    assert outcome.state is State.INVALID_EXPERIMENT
+    assert outcome.exit_code == 2
+    # Two identical trees produced a difference the published rule calls too large to
+    # measure through. That is the honest reading, and it is why the README does not claim
+    # the aggregate separates.
+    assert outcome.report_matches is True
 
 
 def test_churn_separates_under_either_arm_ordering() -> None:
@@ -115,18 +138,14 @@ def test_gate_will_not_decide_on_a_two_pair_experiment() -> None:
     assert outcome.exit_code == 2
 
 
-def test_the_swapped_null_reaches_a_friction_verdict_on_zero_difference() -> None:
-    """Two identical trees, and the re-derived verdict is a friction regression.
+def test_the_treatment_carries_the_worse_of_the_two_null_orderings() -> None:
+    """Which arm is called "baseline" is arbitrary, so the treatment is told the less
+    flattering of the two figures the null produced.
 
-    This is what "the aggregate does not separate" rests on: at this sample size the noise
-    floor reaches past the published threshold, so the same rule that would flag a real
-    regression also flags a comparison of a tree against itself.
-
-    The gate will not act on it — see the test above — but the verdict is a property of the
-    evidence, not of whether anything chose to enforce it.
+    Recording the favourable one would be a choice made after seeing the data — and it
+    would have changed the verdict, since 1.0000 sits inside the band and 1.7403 does not.
     """
-    outcome = verify_path(PUBLISHED / "null-control-arms-swapped")
-    assert outcome.assessment is not None
-    assert outcome.assessment.state is State.FRICTION_REGRESSION
-    assert outcome.assessment.ffr_gate is not None
-    assert outcome.assessment.ffr_gate > outcome.manifest.policy.decision.friction_threshold  # type: ignore[union-attr]
+    treatment = verify_path(PUBLISHED / "treatment-replace-cache")
+    assert treatment.manifest is not None
+    assert treatment.manifest.null_control_ffr_gate == pytest.approx(1.7403, abs=5e-5)
+    assert treatment.state is State.INVALID_EXPERIMENT
