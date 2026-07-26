@@ -201,7 +201,7 @@ def verify_bytes(
 
     for error in (
         check_digests(manifest, cassette.files),
-        check_pair_structure(manifest),
+        check_pair_structure(manifest, policy),
     ):
         if error is not None:
             return _fail(mode, error, strict=strict, manifest=manifest)
@@ -235,6 +235,26 @@ def verify_bytes(
             EvidenceError(
                 state=State.EVIDENCE_INCOMPLETE,
                 detail="treatment cassette carries no null control result",
+            ),
+            strict=strict,
+            manifest=manifest,
+        )
+
+    # ...and `kind` is a manifest assertion, so the check above can be sidestepped by
+    # relabelling a treatment as a null control and dropping the number. `verify` catches
+    # that at step 5 — the null block disappears from the report — but `gate` never looks
+    # at the report, so it has to refuse the relabelling directly. §4.4 makes the null
+    # control an unconditional gate precondition; a cassette does not get to opt out of it
+    # by renaming itself.
+    if mode is Mode.GATE and manifest.kind is not ExperimentKind.TREATMENT:
+        return _fail(
+            mode,
+            EvidenceError(
+                state=State.GATE_PRECONDITION_UNMET,
+                detail=(
+                    f"gate decides on a treatment experiment; this cassette declares "
+                    f"kind '{manifest.kind.value}'"
+                ),
             ),
             strict=strict,
             manifest=manifest,
