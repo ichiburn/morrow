@@ -58,7 +58,8 @@ candidate actually turns out to cost more is a *result*, and results are reporte
 |---|---|---|
 | C5 | Safe execution against untrusted repositories | No OS-level isolation is implemented. **MORROW runs only against trusted repositories.** |
 | C6 | Statistical significance | At the sample sizes here a one-sided sign test cannot reach it: over three compared pairs its p floor is 2⁻³ = 0.125. At larger K the floor drops below 0.05 and that argument stops applying — but significance is still not claimed, because one recording session on one model does not supply the independence such a test assumes. The report states whichever of the two is true for its K |
-| C7 | Tamper resistance of the evidence | There is no signing and no provenance. The hashes detect **accidental corruption**, nothing more |
+| C7 | Tamper resistance of the evidence | There is no signing and no provenance. The hashes detect **accidental corruption**; recomputation detects a report that no longer follows from its evidence. Neither is a signature |
+| C9 | That every manifest field is re-derivable from the evidence | Most are — run success comes from the launcher log, test cycles are cross-checked against the stream, the file set follows from the manifest's structure. Two are **not**: `regression_detected` has no corresponding artifact in the cassette, and a treatment's recorded `null_control_ffr_gate` is a number from a *different* experiment that is not shipped alongside it. Both are believed as stated |
 | C8 | Robustness against an adversarial agent | These are proxy metrics valid under a fixed provider, model, and prompt |
 
 ---

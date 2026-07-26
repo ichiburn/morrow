@@ -50,6 +50,9 @@ from morrow.domain.events import (
     StopReason,
     TerminalReason,
 )
+
+# Aliased: pytest tries to collect anything named Test* as a test class.
+from morrow.domain.events import TestEvent as LauncherRunEvent
 from morrow.domain.metrics import ComponentName, Variant
 from morrow.domain.policy import ExperimentPolicy, MetricsPolicy, Policy
 
@@ -72,8 +75,13 @@ def _policy(pairs: int = 2) -> Policy:
     )
 
 
-def _events(run_id: str, *, reads: int) -> bytes:
-    """A minimal well-formed stream: a session start, N distinct reads, a completion."""
+def _events(run_id: str, *, reads: int, tests: int) -> bytes:
+    """A minimal well-formed stream: a session start, N distinct reads, M test runs through
+    the launcher, and a completion.
+
+    The test events have to be here rather than implied: the verifier cross-checks them
+    against the launcher log, because the log alone is what `test_cycles` is read from.
+    """
     events: list[object] = [
         SessionStartEvent(seq=0, run_id=run_id, raw_kind=RawKind.INIT, session_ref="s0",
                           model=KnownModel.CLAUDE_SONNET)
@@ -89,9 +97,20 @@ def _events(run_id: str, *, reads: int) -> bytes:
                 path_ref=f"p{index}",
             )
         )
+    for index in range(tests):
+        events.append(
+            LauncherRunEvent(
+                seq=reads + 1 + index,
+                run_id=run_id,
+                raw_kind=RawKind.ASSISTANT_TOOL_USE,
+                tool_ref=f"t{reads + index}",
+                success=True,
+                launcher_seq=index,
+            )
+        )
     events.append(
         CompletionEvent(
-            seq=reads + 1,
+            seq=reads + tests + 1,
             run_id=run_id,
             raw_kind=RawKind.RESULT,
             num_turns=3,
@@ -123,7 +142,7 @@ def _run(
         tests=f"{run_id}.tests.json",
     )
     files = {
-        names.events: _events(run_id, reads=reads),
+        names.events: _events(run_id, reads=reads, tests=tests),
         names.churn: encode_json(
             ChurnRecord(
                 added_lines=churn,
@@ -675,6 +694,72 @@ def test_a_pair_cannot_be_both_invalidated_and_adopted(cassette: Path) -> None:
     outcome = verify_path(cassette)
     assert outcome.state is State.EVIDENCE_INVALID
     assert "both invalidated and adopted" in outcome.detail
+
+
+def test_relabelling_a_treatment_does_not_skip_its_null_control(cassette: Path) -> None:
+    """`kind` is a manifest assertion, so "a treatment must carry a null control" can be
+    sidestepped by calling the treatment something else and dropping the number.
+
+    `verify` catches it at step 5 — the null block vanishes from the report — but `gate`
+    never reads the report, so it has to refuse the relabelling outright. §4.4 makes the
+    null control an unconditional gate precondition.
+    """
+
+    def relabel(manifest: dict) -> None:
+        manifest["kind"] = "null_control"
+        manifest["null_control_ffr_gate"] = None
+
+    _patch_manifest(cassette, relabel)
+    gated = verify_path(cassette, mode=Mode.GATE, evaluator_policy=_policy())
+    assert gated.state is State.GATE_PRECONDITION_UNMET
+    assert gated.exit_code == 2
+    # And verify still refuses, by a different route: the report no longer follows.
+    assert verify_path(cassette).exit_code == 2
+
+
+def test_a_truncated_stream_cannot_be_excused_by_the_manifest(cassette: Path) -> None:
+    """`seq` only proves the events present are contiguous, so lopping off the tail and
+    renumbering passes it — and a shorter trajectory is a cheaper one. The completion event
+    is what proves the stream is whole, and an adopted run always needs one, whatever
+    `terminal_status` claims."""
+    lines = (cassette / "r1.events.jsonl").read_bytes().decode().splitlines()
+    kept = [line for line in lines if '"completion"' not in line]
+    _rewrite(cassette, "r1.events.jsonl", ("\n".join(kept) + "\n").encode(), fix_digest=True)
+    _patch_manifest(
+        cassette,
+        lambda m: [
+            run.__setitem__("terminal_status", "timeout")
+            for run in m["runs"]
+            if run["run_id"] == "r1"
+        ],
+    )
+    outcome = verify_path(cassette)
+    assert outcome.state in {State.EVIDENCE_INCOMPLETE, State.EVIDENCE_INVALID}
+    assert outcome.exit_code == 2
+
+
+def test_the_launcher_log_and_the_stream_have_to_agree(cassette: Path) -> None:
+    """`test_cycles` is read from the launcher log alone, so shortening it lowers the
+    component directly — while the test events sit in the stream contradicting it."""
+    shortened = encode_json(LauncherRecord(exit_codes=(0,)).model_dump(mode="json"))
+    _rewrite(cassette, "r1.tests.json", shortened, fix_digest=True)
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert "test event" in outcome.detail
+
+
+def test_an_arm_cannot_be_run_until_a_cheap_result_appears(cassette: Path) -> None:
+    """Every attempt is genuine and every invariant holds; the metric is still chosen after
+    the fact. Capping retries is what keeps a retry policy from being best-of-N."""
+
+    def add_many_attempts(manifest: dict) -> None:
+        template = next(r for r in manifest["runs"] if r["run_id"] == "r1")
+        manifest["runs"].append({**template, "attempt_index": 9, "adopted": False})
+
+    _patch_manifest(cassette, add_many_attempts)
+    outcome = verify_path(cassette)
+    assert outcome.state is State.EVIDENCE_INVALID
+    assert "retry cap" in outcome.detail
 
 
 def test_an_oversized_file_is_refused_before_it_is_read(cassette: Path) -> None:
