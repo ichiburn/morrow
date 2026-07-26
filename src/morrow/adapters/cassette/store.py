@@ -24,11 +24,26 @@ from typing import Any
 from morrow.domain.cassette import MANIFEST_NAME, Manifest
 from morrow.domain.events import AgentEvent
 
+#: Ceilings on what a cassette may be, enforced before any of it is read.
+#:
+#: A cassette arrives from a pull request, and ``read_cassette`` loads all of it into
+#: memory to hash it. Without a bound, a 20 GB ``r0.events.jsonl`` — or a million tiny
+#: files — kills the verifier before a single digest is checked, which turns "the evidence
+#: is hostile" into "the process died" rather than into exit 2.
+#:
+#: The limits sit far above anything a real recording produces: the largest committed
+#: event stream is 25 KB across 20 files, so these leave three orders of magnitude of
+#: headroom while still bounding the damage.
+MAX_FILE_BYTES = 8 * 1024 * 1024
+MAX_TOTAL_BYTES = 64 * 1024 * 1024
+MAX_FILE_COUNT = 256
+
 
 class CassetteReadError(RuntimeError):
     """The cassette could not be read at all: missing directory, unreadable file, a
-    symlink, or a nested path. This is an infrastructure failure, distinct from a
-    cassette whose bytes are present but do not match their digests."""
+    symlink, a nested path, or more bytes than the limits above allow. This is an
+    infrastructure failure, distinct from a cassette whose bytes are present but do not
+    match their digests."""
 
 
 def encode_json(payload: Any) -> bytes:
@@ -86,20 +101,48 @@ def read_cassette(root: Path) -> CassetteBytes:
     manifest must be present; its contents are not parsed here, because a manifest whose
     bytes are corrupt is a verification verdict, not a read failure.
     """
+    # A symlinked root would have verification read a directory the caller did not name.
+    # ``is_dir()`` alone follows the link, so the link itself is checked first.
+    if root.is_symlink():
+        raise CassetteReadError(f"cassette root is a symlink: {root}")
     if not root.is_dir():
         raise CassetteReadError(f"not a cassette directory: {root}")
 
+    entries = sorted(root.iterdir())
+    if len(entries) > MAX_FILE_COUNT:
+        raise CassetteReadError(
+            f"cassette holds {len(entries)} entries, over the limit of {MAX_FILE_COUNT}"
+        )
+
     files: dict[str, bytes] = {}
     manifest_bytes: bytes | None = None
-    for entry in sorted(root.iterdir()):
+    total = 0
+    for entry in entries:
         if entry.is_symlink():
             raise CassetteReadError(f"symlink in cassette: {entry.name}")
         if not entry.is_file():
             raise CassetteReadError(f"not a regular file in cassette: {entry.name}")
+        # Size is checked before the read, so an oversized file is refused rather than
+        # loaded and then complained about.
+        size = entry.stat().st_size
+        if size > MAX_FILE_BYTES:
+            raise CassetteReadError(
+                f"{entry.name} is {size} bytes, over the per-file limit of {MAX_FILE_BYTES}"
+            )
+        total += size
+        if total > MAX_TOTAL_BYTES:
+            raise CassetteReadError(
+                f"cassette exceeds the total size limit of {MAX_TOTAL_BYTES} bytes"
+            )
         try:
             payload = entry.read_bytes()
         except OSError as error:  # unreadable file, permissions, device
             raise CassetteReadError(f"cannot read {entry.name}: {error}") from error
+        # The file could have been swapped between the stat and the read. Re-checking the
+        # length closes the window for growth; a same-size substitution is caught by the
+        # digest a step later.
+        if len(payload) > MAX_FILE_BYTES:
+            raise CassetteReadError(f"{entry.name} grew past the per-file limit while reading")
         if entry.name == MANIFEST_NAME:
             manifest_bytes = payload
         else:

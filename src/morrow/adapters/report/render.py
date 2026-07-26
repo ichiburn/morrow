@@ -27,10 +27,16 @@ Design choices worth stating, because a report that overclaims is worse than non
   significance, so all that is reported is an observation measured against a
   concurrently collected null control under a rule fixed beforehand (design.md §0.1,
   measurement.md §3.8). The p-floor in that sentence is computed from K, not quoted.
-* **The JSON is byte-reproducible.** Keys are sorted, numbers stay numeric (never
-  stringified), non-finite values are rejected (``allow_nan=False``), the separator
-  is LF, and there is exactly one trailing newline. The same input yields the same
-  bytes on any machine.
+* **The JSON is byte-reproducible for a given libm.** Keys are sorted, numbers stay
+  numeric (never stringified), non-finite values are rejected (``allow_nan=False``), the
+  separator is LF, and there is exactly one trailing newline — so nothing in the
+  *encoding* varies between runs or machines. The honest caveat is the arithmetic
+  upstream of it: an FFR is ``exp(Σ w·ln r / Σ w)``, and ``log``/``exp`` are permitted to
+  differ in the last bit between C libraries. Two platforms can therefore print
+  ``1.7402771957526717`` and ``…19`` for the same evidence. The *verdict* is unaffected —
+  threshold comparisons go through Decimal with an epsilon — but ``verify``'s byte
+  comparison could report ``EVIDENCE_STALE`` on a cross-platform reproduction that is
+  actually correct. Reproduction is claimed within a platform, not across all of them.
 
 The accompanying facts a report needs but the domain types do not carry — the
 evidence mode, the SigNoz trace id, the attempted/invalid pair breakdown, the null
@@ -197,21 +203,45 @@ def _pair_cells(
     return cells
 
 
-def _statistical_disclaimer(k: int) -> str:
-    """The C6 sentence, with the p-floor computed from the actual K.
+#: Conventional alpha, used only to decide which half of the C6 sentence is true — never
+#: to accept a result. Nothing in MORROW tests against it.
+_CONVENTIONAL_ALPHA = 0.05
 
-    The floor is derived rather than quoted: a one-sided sign test over K paired
-    observations cannot go below ``2**-K``, and hard-coding the K=4 value would understate
-    the floor the moment an experiment runs with fewer pairs — which is exactly when
-    overclaiming would be easiest.
+
+def _statistical_disclaimer(comparable_pairs: int) -> str:
+    """The C6 sentence, over the pairs that were actually compared.
+
+    Two things are derived rather than quoted. The count is the number of pairs that
+    produced a ratio, not the number the policy planned for: a run of four that yielded two
+    usable pairs has a floor of 1/4, and printing the planned K would understate it.
+
+    And the *reason* changes with that count. Below about five pairs a one-sided sign test
+    cannot reach conventional significance at all — the floor 2⁻ⁿ sits above alpha, so the
+    claim is impossible rather than merely unmade. Above it the floor drops under alpha and
+    that sentence becomes false; what remains true is that this instrument still does not
+    claim significance, because a single recording session on a single model does not give
+    the independence such a test assumes. Saying "cannot establish significance" at K=8
+    would be an overclaim in the opposite direction: understating what the data could show
+    is still misreporting it.
     """
-    denominator = 2**k
+    denominator = 2**comparable_pairs
+    floor = 1 / denominator
+    if floor >= _CONVENTIONAL_ALPHA:
+        reason = (
+            f"over {comparable_pairs} compared pair(s) a one-sided sign test cannot reach "
+            f"conventional significance — its p floor is 1/{denominator} = {floor:.4f}, "
+            f"above {_CONVENTIONAL_ALPHA}"
+        )
+    else:
+        reason = (
+            f"the p floor over {comparable_pairs} compared pairs is 1/{denominator} = "
+            f"{floor:.6f}, but significance is still not claimed: one recording session "
+            "on one model does not supply the independence such a test assumes"
+        )
     return (
-        f"No statistical significance is claimed. At K={k} a sign test cannot "
-        f"establish significance (one-sided p floor 1/{denominator} = "
-        f"{1 / denominator:.4f}). This is an observation measured against a "
-        "concurrently collected null control, under a decision rule fixed before "
-        "the treatment data was seen."
+        f"No statistical significance is claimed — {reason}. This is an observation "
+        "measured against a concurrently collected null control, under a decision rule "
+        "fixed before the treatment data was seen."
     )
 
 
@@ -252,8 +282,8 @@ def render_markdown(
         f"Experiment `{meta.experiment_id}` · Scenario `{meta.scenario_id}`"
     )
     lines.append(f"- Provider `{meta.provider}` · Model `{meta.model}`")
-    lines.append(f"- Repetitions: K = {k} pairs")
-    lines.append(f"- {_statistical_disclaimer(k)}")
+    lines.append(f"- Repetitions: K = {k} pairs planned, {len(successful)} compared")
+    lines.append(f"- {_statistical_disclaimer(len(successful))}")
     lines.append("")
 
     # --- Verdict + findings ------------------------------------------------
