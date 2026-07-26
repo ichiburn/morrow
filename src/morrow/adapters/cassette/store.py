@@ -102,20 +102,21 @@ def read_cassette(root: Path) -> CassetteBytes:
     manifest must be present; its contents are not parsed here, because a manifest whose
     bytes are corrupt is a verification verdict, not a read failure.
     """
-    # A symlinked root would have verification read a directory the caller did not name.
-    # ``is_dir()`` alone follows the link, so the link itself is checked first.
-    if root.is_symlink():
-        raise CassetteReadError(f"cassette root is a symlink: {root}")
-    if not root.is_dir():
-        raise CassetteReadError(f"not a cassette directory: {root}")
-
     files: dict[str, bytes] = {}
     manifest_bytes: bytes | None = None
     total = 0
-    # Every filesystem call below can fail on a directory an attacker is also writing to.
+    # Every filesystem call below can fail on a directory an attacker is also writing to —
+    # including the very first ones, which is why the root checks are inside the guard too.
     # An OSError escaping here would leave the CLI exiting on a traceback rather than on a
-    # state, so the whole walk is converted at the boundary.
+    # state.
     try:
+        # A symlinked root would have verification read a directory the caller did not
+        # name. ``is_dir()`` alone follows the link, so the link itself is checked first.
+        if root.is_symlink():
+            raise CassetteReadError(f"cassette root is a symlink: {root}")
+        if not root.is_dir():
+            raise CassetteReadError(f"not a cassette directory: {root}")
+
         # Only one entry past the limit is taken: materialising a directory of millions of
         # names costs memory before the count can even be rejected.
         entries = sorted(islice(root.iterdir(), MAX_FILE_COUNT + 1))
@@ -135,17 +136,22 @@ def read_cassette(root: Path) -> CassetteBytes:
                 raise CassetteReadError(
                     f"{name!r} is {size} bytes, over the per-file limit of {MAX_FILE_BYTES}"
                 )
-            total += size
-            if total > MAX_TOTAL_BYTES:
+            if total + size > MAX_TOTAL_BYTES:
                 raise CassetteReadError(
                     f"cassette exceeds the total size limit of {MAX_TOTAL_BYTES} bytes"
                 )
             payload = entry.read_bytes()
-            # The file could have been swapped between the stat and the read. Re-checking
-            # the length closes the window for growth; a same-size substitution is caught
-            # by the digest a step later.
+            # The file could have been swapped between the stat and the read. Both limits
+            # are re-checked against what was actually read: accumulating the *stat* sizes
+            # would let a file reported as one byte and read as eight megabytes slip past
+            # the total. A same-size substitution is caught by the digest a step later.
             if len(payload) > MAX_FILE_BYTES:
                 raise CassetteReadError(f"{name!r} grew past the per-file limit while reading")
+            total += len(payload)
+            if total > MAX_TOTAL_BYTES:
+                raise CassetteReadError(
+                    f"cassette exceeds the total size limit of {MAX_TOTAL_BYTES} bytes"
+                )
             if name == MANIFEST_NAME:
                 manifest_bytes = payload
             else:

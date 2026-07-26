@@ -213,6 +213,12 @@ def evaluator_fingerprint(policy: Policy) -> tuple[object, ...]:
         # The retry cap decides too: raising it turns "repeat a failed pair" into
         # "keep running until a cheap result appears, then adopt that one".
         policy.experiment.max_pair_retries,
+        # The acceptance conditions are part of what was registered in advance. They do
+        # not enter the arithmetic, but they set what counts as a passing run — and a
+        # cassette recorded under a timeout the candidate chose is a measurement taken
+        # under conditions the evaluator never agreed to.
+        policy.acceptance.command_timeout_seconds,
+        policy.acceptance.output_limit_bytes,
     )
 
 

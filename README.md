@@ -118,14 +118,20 @@ PASS · EVIDENCE_REPRODUCED · exit 0
 verdict OK re-derived from the evidence; both report surfaces match byte for byte
 
 $ morrow verify cassettes/null-control-arms-swapped
-PASS · EVIDENCE_REPRODUCED · exit 0
-verdict FRICTION_REGRESSION re-derived from the evidence; both report surfaces match byte for byte
+ERROR · INVALID_EXPERIMENT · exit 2
+report reproduced byte for byte, and the re-derived verdict is INVALID_EXPERIMENT:
+null control FFR_gate 1.7403 exceeds maximum_ffr 1.2000
 
 $ morrow verify cassettes/treatment-replace-cache
 ERROR · INVALID_EXPERIMENT · exit 2
 report reproduced byte for byte, and the re-derived verdict is INVALID_EXPERIMENT:
 null control FFR_gate 1.7403 exceeds maximum_ffr 1.2000
 ```
+
+**Two of the three exit 2, and that is the result.** Reading the same tree against itself
+produced a difference the published rule calls too large to measure through, so the day's
+experiment is reported as invalid rather than as a finding. The treatment carries that same
+figure — the worse of the two arm orderings, not the flattering one — and fails with it.
 
 ### The measured runs
 
@@ -170,9 +176,14 @@ arbitrary. One-sided aggregation is *not* symmetric, and swapping the labels mov
 null from **1.0000** to **1.7403** — across the published tolerance band of 1.20.
 
 The pre-registered rule for a null outside its band is to report the experiment as
-`INVALID_EXPERIMENT`, not to widen the band. So that is what the treatment cassette
-records, and what CI asserts. Both orderings are committed, so neither can be the one that
-was picked after seeing the data.
+`INVALID_EXPERIMENT`, not to widen the band. Both null orderings are committed, so neither
+can be the one that was picked after seeing the data, and the treatment carries the worse
+of the two. All three verdicts and their exit codes are asserted in CI.
+
+For completeness: the treatment's own aggregate works out to **`FFR_gate` = 2.0801**, past
+the 1.50 threshold. That number is stated here rather than in the report because it did not
+decide anything — the experiment was invalidated before it could. Publishing it and
+publishing the reason it was not used are the same obligation.
 
 `files_read_distinct` carries no signal here: 0.8947, 0.8095, 1.4167 — the third pair
 points the other way. It is reported rather than dropped.
@@ -189,9 +200,9 @@ is the outcome it was built to be able to report.)*
 
 ```bash
 uv sync --all-groups --locked
+uv run morrow verify cassettes/null-control-as-recorded    # exits 0: reproduced, in band
+uv run morrow verify cassettes/null-control-arms-swapped   # exits 2: reproduced, out of band
 uv run morrow verify cassettes/treatment-replace-cache     # exits 2, as CI asserts
-uv run morrow verify cassettes/null-control-arms-swapped   # exits 0: reproduced
-uv run morrow gate   cassettes/null-control-arms-swapped   # exits 2: two pairs, floor is three
 ```
 
 `verify` reads only the cassette. It checks every digest, parses every event under the
@@ -208,10 +219,19 @@ against** — including by declaring that one pair is enough. Only `runs_per_var
 exempt, because that is how many pairs were planned rather than how many the decision
 requires.
 
-This is why `gate` on either null control exits 2 rather than 1: they ran two pairs and the
-published floor is three. Their numbers are still readable — `verify` reproduces them, and
-the swapped ordering does produce a friction verdict when evaluated at the sample size it
-actually ran at. It is just not a verdict the gate is entitled to issue.
+It also decides only on a cassette that declares itself a treatment, and only on one that
+carries a null control result. Both are gate preconditions in the design, and both were
+reachable by editing a single field before that was enforced — a treatment relabelled as a
+null control skipped the null check entirely, because `verify` catches the relabelling only
+via the report and `gate` never reads the report.
+
+More generally, a manifest carries **labels and pointers, not findings**. Which arm a run
+belongs to and which files hold its evidence are structure; there is nothing to derive them
+from. Everything that *decides* is re-derived: run success from the launcher log, test
+cycles cross-checked against the event stream, the permitted file set from the manifest's
+own shape, and a run cannot be adopted unless its stream ends with the completion event
+that proves it is whole. Retries are capped and a discarded attempt has to be one that did
+not finish, so an arm cannot be run repeatedly with the cheapest result adopted.
 
 Two caveats worth stating rather than discovering:
 
