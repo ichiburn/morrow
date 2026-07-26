@@ -317,8 +317,25 @@ def check_pair_structure(manifest: Manifest) -> EvidenceError | None:
                 )
             seen_files.add(name)
 
+    # Invalidated pairs are counted in the report's "attempted" total, so a duplicate — or
+    # a pair claimed as both invalidated and adopted — inflates how much work the
+    # experiment appears to have done without any evidence behind the inflation.
+    invalidated: set[int] = set()
+    for record in manifest.invalid_pairs:
+        if record.pair_id in invalidated:
+            return EvidenceError(
+                state=State.EVIDENCE_INVALID,
+                detail=f"pair {record.pair_id} is listed as invalid more than once",
+            )
+        invalidated.add(record.pair_id)
+
     by_pair: dict[int, dict[Variant, int]] = {}
     for entry in manifest.adopted_runs:
+        if entry.pair_id in invalidated:
+            return EvidenceError(
+                state=State.EVIDENCE_INVALID,
+                detail=f"pair {entry.pair_id} is both invalidated and adopted",
+            )
         by_pair.setdefault(entry.pair_id, {}).setdefault(entry.variant, 0)
         by_pair[entry.pair_id][entry.variant] += 1
     if not by_pair:
