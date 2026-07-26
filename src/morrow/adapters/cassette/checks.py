@@ -438,10 +438,12 @@ def build_pairs(runs: Sequence[RunEvidence]) -> list[RawPairMeasurement]:
                 pair_id=pair_id,
                 baseline_success=baseline.entry.status is RunStatus.OK,
                 candidate_success=candidate.entry.status is RunStatus.OK,
-                regression_detected=(
-                    baseline.entry.regression_detected
-                    or candidate.entry.regression_detected
-                ),
+                # ``regression_detected`` is left at its default. A cassette holds no
+                # regression-test artifact, so nothing here could establish it — and a
+                # manifest field claiming it would be an assertion that *suppresses* a
+                # finding, which is the direction a candidate has reason to lie in. A
+                # REGRESSION verdict is reachable from a live measurement, not from a
+                # replay (measurement.md §3.6).
                 baseline=baseline.counts(),
                 candidate=candidate.counts(),
             )

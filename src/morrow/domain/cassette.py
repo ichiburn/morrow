@@ -16,6 +16,19 @@ knew and did not publish stays on the evaluator side (:mod:`morrow.adapters.refs
 pattern-bounded, so a cassette either parses whole or is rejected. File names are bounded
 to a single path segment: a manifest cannot name ``../etc/passwd`` or a nested directory,
 which is what keeps reading a cassette from becoming a traversal (evidence.md §5.1).
+Counts are bounded too, because an integer wide enough to refuse conversion to a float is
+a crash where a verdict belongs.
+
+*A manifest carries labels and pointers, not findings.* Which arm a run belongs to, which
+pair, which attempt, and which files hold its evidence — those are structure, and there is
+nothing to derive them from. Everything that *decides* is re-derived from the evidence
+instead: run success comes from the launcher log, test cycles are cross-checked against the
+stream, and a run cannot be adopted unless its stream carries the completion event that
+proves it is whole. This is why ``regression_detected`` is absent even though
+measurement.md §3.6 defines it. A cassette holds no regression-test artifact, so the field
+could only ever have been an assertion — and an assertion that suppresses a finding is
+exactly the kind a candidate has reason to make. The field returns when the evidence for it
+does.
 
 This module is pure data. Reading and writing cassettes is the adapter's job.
 """
@@ -220,9 +233,6 @@ class RunEntry(BaseModel):
     terminal_status: TerminalStatus
     status: RunStatus
     session_ref: SessionRef
-    #: A regression test failed at post for this run (measurement.md §3.6). Distinct from
-    #: ``status``: an acceptance failure is not automatically a regression.
-    regression_detected: bool = False
     files: RunFiles
 
 
