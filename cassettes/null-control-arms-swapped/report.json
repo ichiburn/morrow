@@ -18,7 +18,7 @@
           "small_sample": false
         }
       ],
-      "ratio": 1.2083333333333335
+      "ratio": null
     },
     {
       "baseline_median": 60.0,
@@ -38,7 +38,7 @@
           "small_sample": false
         }
       ],
-      "ratio": 2.1809139784946234
+      "ratio": null
     },
     {
       "baseline_median": 1.5,
@@ -58,22 +58,22 @@
           "small_sample": true
         }
       ],
-      "ratio": 2.0
+      "ratio": null
     }
   ],
   "evidence_mode": "live",
   "experiment_id": "null-control-arms-swapped",
   "ffr": {
-    "computed": true,
-    "display": 1.7402771957526717,
-    "exceeds_threshold": true,
-    "gate": 1.7402771957526717,
+    "computed": false,
+    "display": null,
+    "exceeds_threshold": false,
+    "gate": null,
     "threshold": 1.5
   },
   "findings": [
     {
-      "detail": "FFR_gate 1.7403 > threshold 1.5000",
-      "state": "FRICTION_REGRESSION"
+      "detail": "null control FFR_gate 1.7403 exceeds maximum_ffr 1.2000",
+      "state": "INVALID_EXPERIMENT"
     }
   ],
   "model": "claude_sonnet",
@@ -95,12 +95,12 @@
   },
   "trace_id": null,
   "verdict": {
-    "advisory": true,
-    "exit_code": 0,
-    "label": "PASS",
+    "advisory": false,
+    "exit_code": 2,
+    "label": "ERROR",
     "mode": "measure",
-    "primary_reason": "FFR_gate 1.7403 > threshold 1.5000",
-    "state": "FRICTION_REGRESSION",
+    "primary_reason": "null control FFR_gate 1.7403 exceeds maximum_ffr 1.2000",
+    "state": "INVALID_EXPERIMENT",
     "strict": false
   }
 }

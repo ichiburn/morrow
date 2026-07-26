@@ -52,17 +52,17 @@ jobs:
       # digests, closed schemas, recomputed metrics, recomputed verdict, and a byte
       # comparison against the report that was committed alongside it.
       #
-      # The treatment cassette exits 2 on purpose. Its null control fell outside the
-      # published tolerance band, and the pre-registered rule for that case is to report
-      # the experiment as INVALID_EXPERIMENT — not to widen the band. The expected exit
-      # code is asserted per cassette so a change that silently turned that into a pass
-      # would fail the build.
+      # Two of the three exit 2 on purpose. The swapped null control fell outside the
+      # published tolerance band, and the treatment carries that same figure; the
+      # pre-registered rule for a null out of band is to report INVALID_EXPERIMENT, not to
+      # widen the band. The expected exit code is asserted per cassette so a change that
+      # silently turned either into a pass would fail the build.
       - name: Verify the published cassettes
         run: |
           set -u
           failed=0
           for entry in "null-control-as-recorded:0" \
-                       "null-control-arms-swapped:0" \
+                       "null-control-arms-swapped:2" \
                        "treatment-replace-cache:2"; do
             name="${entry%:*}"
             want="${entry#*:}"
