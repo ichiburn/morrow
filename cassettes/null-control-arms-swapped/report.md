@@ -1,8 +1,8 @@
-# MORROW — PASS
+# MORROW — ERROR
 
-**Primary reason:** FFR_gate 1.7403 > threshold 1.5000 (`FRICTION_REGRESSION`)
+**Primary reason:** null control FFR_gate 1.7403 exceeds maximum_ffr 1.2000 (`INVALID_EXPERIMENT`)
 
-- Mode `measure` (advisory) · Evidence `live` · Experiment `null-control-arms-swapped` · Scenario `replace-cache`
+- Mode `measure` · Evidence `live` · Experiment `null-control-arms-swapped` · Scenario `replace-cache`
 - Provider `claude-code` · Model `claude_sonnet`
 - Repetitions: K = 2 pairs planned, 2 compared
 - No statistical significance is claimed — over 2 compared pair(s) a one-sided sign test cannot reach conventional significance — its p floor is 1/4 = 0.2500, above 0.05. This is an observation measured against a concurrently collected null control, under a decision rule fixed before the treatment data was seen.
@@ -11,33 +11,30 @@
 
 | Field | Value |
 | --- | --- |
-| Verdict | PASS |
-| Exit code | 0 |
-| State | `FRICTION_REGRESSION` |
+| Verdict | ERROR |
+| Exit code | 2 |
+| State | `INVALID_EXPERIMENT` |
 | Mode | `measure` |
-| Advisory | yes |
+| Advisory | no |
 | Strict | no |
 
 Findings:
 
-- `FRICTION_REGRESSION`: FFR_gate 1.7403 > threshold 1.5000
+- `INVALID_EXPERIMENT`: null control FFR_gate 1.7403 exceeds maximum_ffr 1.2000
 
 ## Future Friction Ratio
 
-| Quantity | Value |
-| --- | --- |
-| FFR_gate (one-sided) | 1.7403 |
-| Threshold (`friction_threshold`) | 1.5000 |
-| Comparison | FFR_gate > threshold — exceeds threshold |
-| FFR_display (two-sided) | 1.7403 |
+FFR was not computed for this verdict (no FFR-eligible successful pairs).
+
+- Threshold (`friction_threshold`): 1.5000
 
 ## Components — median over successful pairs
 
 | Component | Baseline median | Candidate median | r[i] | Over hard-max (3.0000)? |
 | --- | --- | --- | --- | --- |
-| `files_read_distinct` | 13 | 15.5 | 1.2083 | no |
-| `final_churn` | 60 | 132 | 2.1809 | no |
-| `test_cycles` | 1.5 | 2 | 2.0000 | no |
+| `files_read_distinct` | 13 | 15.5 | — | — |
+| `final_churn` | 60 | 132 | — | — |
+| `test_cycles` | 1.5 | 2 | — | — |
 
 > r[i] is the median of the per-pair ratios, not the ratio of the two medians in this table.
 

@@ -30,7 +30,7 @@ from morrow.domain.cassette import (
     RunStatus,
     TerminalStatus,
 )
-from morrow.domain.events import AgentEvent, CommandPurpose, EventKind
+from morrow.domain.events import AgentEvent, CommandPurpose, EventKind, TerminalReason
 from morrow.domain.metrics import ComponentName, RawPairMeasurement, Variant
 from morrow.domain.policy import Policy
 
@@ -236,9 +236,14 @@ def check_run_invariants(run: RunEvidence, policy: Policy) -> EvidenceError | No
     # so requiring the event only when it says "completed" would let a cassette excuse its
     # own truncation by writing "timeout" instead.
     #
-    # An adopted run therefore always needs exactly one. A run that genuinely timed out is
-    # still allowed in the cassette — retained attempts are evidence (§5.1) — it just
-    # cannot be the one whose metrics feed the verdict.
+    # An adopted run therefore always needs exactly one, ending the stream, and agreeing
+    # with the manifest about how the run finished.
+    #
+    # A discarded attempt is held to less: it keeps its evidence in the cassette (§5.1) but
+    # is not required to have completed. In practice the other invariants — the unpaired
+    # tool-call cap, the launcher cross-check — make a run that died mid-tool-call hard to
+    # publish at all, so "a retained timeout" is closer to a stated allowance than to
+    # something the current recorder produces.
     if entry.adopted and len(completions) != 1:
         return EvidenceError(
             state=State.EVIDENCE_INCOMPLETE,
@@ -263,6 +268,25 @@ def check_run_invariants(run: RunEvidence, policy: Policy) -> EvidenceError | No
                 f"'{entry.terminal_status.value}'"
             ),
         )
+    if entry.adopted:
+        # The completion has to be the *last* event, or the guarantee is only that the
+        # stream stops somewhere after it — deleting everything past the completion and
+        # renumbering would still satisfy a count.
+        if events[-1].kind is not EventKind.COMPLETION:
+            return EvidenceError(
+                state=State.EVIDENCE_INCOMPLETE,
+                detail=f"run {entry.run_id}: the stream does not end with its completion",
+            )
+        # And the provider's own account of how the run ended has to agree with the
+        # manifest's. `terminal_status` is an assertion; `terminal_reason` is evidence.
+        if completions[0].terminal_reason is not TerminalReason.COMPLETED:
+            return EvidenceError(
+                state=State.EVIDENCE_INVALID,
+                detail=(
+                    f"run {entry.run_id}: manifest says completed, but the completion "
+                    f"event says '{completions[0].terminal_reason.value}'"
+                ),
+            )
 
     # The launcher log is the primary source for `test_cycles`, and nothing else was
     # checking it against the stream. Shortening `exit_codes` lowers the component directly
@@ -356,6 +380,34 @@ def check_pair_structure(manifest: Manifest, policy: Policy) -> EvidenceError | 
                     f"retry cap of {policy.experiment.max_pair_retries}"
                 ),
             )
+        # Attempts are numbered from zero without gaps. A cap on the highest index alone
+        # would let an inconvenient middle attempt be deleted — the count of work actually
+        # done is part of what a retained attempt is for.
+        if any(
+            (pair_id, variant, index) not in seen for index in range(attempts + 1)
+        ):
+            return EvidenceError(
+                state=State.EVIDENCE_INVALID,
+                detail=(
+                    f"pair {pair_id} {variant.value} is missing an attempt below index "
+                    f"{attempts}"
+                ),
+            )
+
+    # A retry has to be a retry: the attempt it replaced must have failed. Capping the
+    # count is not enough on its own — running an arm three times and adopting whichever
+    # came out cheapest is best-of-N within the cap, and it biases the metric exactly as
+    # much as an uncapped one would. A discarded attempt that *completed* is a measurement
+    # somebody chose not to use.
+    for entry in manifest.runs:
+        if not entry.adopted and entry.terminal_status is TerminalStatus.COMPLETED:
+            return EvidenceError(
+                state=State.EVIDENCE_INVALID,
+                detail=(
+                    f"run {entry.run_id}: a completed attempt was discarded rather than "
+                    "adopted; retries are for runs that did not finish"
+                ),
+            )
 
     # One recording must not back two arms. Without this, a manifest could point pair 0 and
     # pair 1 at the same three files, pass every digest and every per-run invariant, and
@@ -416,6 +468,21 @@ def check_pair_structure(manifest: Manifest, policy: Policy) -> EvidenceError | 
                         "exactly one is required"
                     ),
                 )
+
+    # Every pair with runs recorded is accounted for: adopted on both arms, or declared
+    # invalid. Otherwise a pair whose numbers came out inconvenient can simply be left
+    # unadopted and unlisted — it drops out of the experiment without appearing in the
+    # report's attempted total or anywhere else. That is the same after-the-fact selection
+    # the retry cap exists to stop, one level up.
+    for pair_id in sorted({entry.pair_id for entry in manifest.runs} - invalidated):
+        if pair_id not in by_pair:
+            return EvidenceError(
+                state=State.EVIDENCE_INCOMPLETE,
+                detail=(
+                    f"pair {pair_id} has runs recorded but is neither adopted nor declared "
+                    "invalid"
+                ),
+            )
     return None
 
 

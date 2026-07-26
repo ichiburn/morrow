@@ -221,8 +221,15 @@ def _run_files(run: RecordedRun) -> tuple[RunFiles, dict[str, bytes]]:
     return names, payload
 
 
-def build(spec: ExperimentSpec, *, null_ffr_gate: float | None = None) -> Assessment:
-    """Build one cassette and return the assessment that was recorded into it."""
+def build(
+    spec: ExperimentSpec, *, null_ffr_gate: float | None = None
+) -> tuple[Assessment, float | None]:
+    """Build one cassette; return the recorded assessment and the FFR that was measured.
+
+    The two come apart when a null control lands outside its band: the recorded verdict is
+    then ``INVALID_EXPERIMENT`` and carries no FFR, but the number the experiment produced
+    is still what the *next* cassette has to be told about.
+    """
     loaded = {source: load_run(source) for source in spec.order}
     for run in loaded.values():
         _assert_publishable(run)
@@ -273,16 +280,13 @@ def build(spec: ExperimentSpec, *, null_ffr_gate: float | None = None) -> Assess
 
     # Exactly the order ``verify`` applies, so the recorded verdict is the one a verifier
     # will re-derive. If the two disagreed, the cassette would fail its own verification.
-    # The same condition ``verify`` applies — "a null control that is present is checked",
-    # without the extra ``kind`` clause the builder used to carry. The two must agree, or a
-    # cassette can be recorded under one rule and judged under another.
-    null_error = (
-        check_null_control(null_ffr_gate, policy) if null_ffr_gate is not None else None
-    )
+    # A null control is judged on the FFR it just produced; a treatment on the figure it
+    # was handed from one.
+    measured = evaluate_policy(experiment, policy)
+    null_ffr = measured.ffr_gate if spec.kind is ExperimentKind.NULL_CONTROL else null_ffr_gate
+    null_error = check_null_control(null_ffr, policy) if null_ffr is not None else None
     assessment = (
-        invalidated_experiment(experiment, null_error)
-        if null_error is not None
-        else evaluate_policy(experiment, policy)
+        invalidated_experiment(experiment, null_error) if null_error is not None else measured
     )
 
     draft = Manifest(
@@ -328,13 +332,13 @@ def build(spec: ExperimentSpec, *, null_ffr_gate: float | None = None) -> Assess
     if check.report_matches is not True:
         raise SystemExit(f"{spec.experiment_id}: written report is not reproducible")
 
-    ffr = "n/a" if assessment.ffr_gate is None else f"{assessment.ffr_gate:.4f}"
+    ffr = "n/a" if measured.ffr_gate is None else f"{measured.ffr_gate:.4f}"
     print(
         f"{spec.experiment_id:30} {assessment.state.value:20} "
         f"FFR_gate {ffr:>8}  exit {exit_result.exit_code}  "
         f"verify={check.state.value} -> {destination.relative_to(ROOT)}"
     )
-    return assessment
+    return assessment, measured.ffr_gate
 
 
 def _counts(run: RecordedRun) -> dict[ComponentName, float]:
@@ -347,19 +351,19 @@ def _counts(run: RecordedRun) -> dict[ComponentName, float]:
 
 def main() -> None:
     CASSETTE_ROOT.mkdir(parents=True, exist_ok=True)
-    as_recorded = build(NULL_AS_RECORDED)
-    swapped = build(NULL_ARMS_SWAPPED)
+    _, as_recorded_ffr = build(NULL_AS_RECORDED)
+    _, swapped_ffr = build(NULL_ARMS_SWAPPED)
 
-    if as_recorded.ffr_gate is None or swapped.ffr_gate is None:
+    if as_recorded_ffr is None or swapped_ffr is None:
         raise SystemExit("a null control produced no FFR; refusing to build the treatment")
 
     # The treatment carries the *worse* of the two null orderings. The label assignment is
     # arbitrary, so reporting the flattering one beside the treatment would be a choice
     # made after seeing the data — exactly the thing the pre-registered rule exists to stop.
-    worst_null = max(as_recorded.ffr_gate, swapped.ffr_gate)
+    worst_null = max(as_recorded_ffr, swapped_ffr)
     print(
-        f"null FFR_gate: as-recorded {as_recorded.ffr_gate:.4f}, "
-        f"arms-swapped {swapped.ffr_gate:.4f} -> carrying {worst_null:.4f}"
+        f"null FFR_gate: as-recorded {as_recorded_ffr:.4f}, "
+        f"arms-swapped {swapped_ffr:.4f} -> carrying {worst_null:.4f}"
     )
     build(TREATMENT, null_ffr_gate=worst_null)
 
