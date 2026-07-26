@@ -211,6 +211,24 @@ the verdict with the policy embedded in the manifest, regenerates both report su
 compares them byte-for-byte. Nothing in the recorded report's *contents* is an input to
 that decision.
 
+### Seeing it in SigNoz
+
+```bash
+uv run python scripts/export_cassettes.py          # → localhost:4317
+uv run python scripts/signoz_query.py --minutes 15 # read back what actually landed
+```
+
+Each experiment becomes one trace — `morrow.experiment` → `morrow.pair` → `morrow.run` →
+one span per agent action — so the two arms of a pair sit side by side and the difference
+between them is the shape of the trace, not a number in a table. The three published
+cassettes produce 3 experiment, 7 pair and 14 run spans over roughly 1,500 action spans.
+
+Every span is **re-derived by the verifier before it is sent**: the verdict on the trace is
+the one `morrow verify` gives for the same directory. They are tagged `evidence_mode=replay`
+so a dashboard filtered to live measurements does not pick them up, and they carry no
+wall-clock duration — that is a property of the machine that recorded them, not of the work
+the task required, so it is not in the published evidence and a replay has none to report.
+
 `gate` runs the same steps but stops before the report comparison, and it will not decide
 under a policy the cassette supplied: the thresholds, the metric parameters **and the
 sample-size floors** have to match the evaluator's own, or it returns

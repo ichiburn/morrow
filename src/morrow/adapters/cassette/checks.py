@@ -268,6 +268,21 @@ def check_run_invariants(run: RunEvidence, policy: Policy) -> EvidenceError | No
                 f"'{entry.terminal_status.value}'"
             ),
         )
+    # Applies to every run, adopted or not. A discarded attempt has to be one that failed
+    # (see `check_pair_structure`), and that rule keys on `terminal_status` — a manifest
+    # assertion. Without this, relabelling a run that plainly finished as "crashed" makes
+    # it discardable, and best-of-N comes back through the label. The stream's own account
+    # of how the run ended is the thing that cannot be relabelled.
+    if completions and completions[0].terminal_reason is TerminalReason.COMPLETED:
+        if entry.terminal_status is not TerminalStatus.COMPLETED:
+            return EvidenceError(
+                state=State.EVIDENCE_INVALID,
+                detail=(
+                    f"run {entry.run_id}: the completion event says the run finished, but "
+                    f"the manifest calls it '{entry.terminal_status.value}'"
+                ),
+            )
+
     if entry.adopted:
         # The completion has to be the *last* event, or the guarantee is only that the
         # stream stops somewhere after it — deleting everything past the completion and
@@ -394,21 +409,6 @@ def check_pair_structure(manifest: Manifest, policy: Policy) -> EvidenceError | 
                 ),
             )
 
-    # A retry has to be a retry: the attempt it replaced must have failed. Capping the
-    # count is not enough on its own — running an arm three times and adopting whichever
-    # came out cheapest is best-of-N within the cap, and it biases the metric exactly as
-    # much as an uncapped one would. A discarded attempt that *completed* is a measurement
-    # somebody chose not to use.
-    for entry in manifest.runs:
-        if not entry.adopted and entry.terminal_status is TerminalStatus.COMPLETED:
-            return EvidenceError(
-                state=State.EVIDENCE_INVALID,
-                detail=(
-                    f"run {entry.run_id}: a completed attempt was discarded rather than "
-                    "adopted; retries are for runs that did not finish"
-                ),
-            )
-
     # One recording must not back two arms. Without this, a manifest could point pair 0 and
     # pair 1 at the same three files, pass every digest and every per-run invariant, and
     # reach `minimum_valid_pairs` on a single run duplicated — a verdict re-derived from
@@ -468,6 +468,28 @@ def check_pair_structure(manifest: Manifest, policy: Policy) -> EvidenceError | 
                         "exactly one is required"
                     ),
                 )
+
+    # A retry has to be a retry: the attempt it replaced must have failed. Capping the
+    # count is not enough on its own — running an arm three times and adopting whichever
+    # came out cheapest is best-of-N within the cap, and it biases the metric exactly as
+    # much as an uncapped one would. A discarded attempt that *completed* is a measurement
+    # somebody chose not to use.
+    #
+    # An invalidated pair is exempt, and has to be: when one arm exhausts its retries the
+    # *other* arm may well have finished cleanly, and that run can neither be adopted (the
+    # pair is invalid) nor deleted (§5.1 keeps every attempt). Requiring it to have failed
+    # would leave dropping its evidence as the only legal move.
+    for entry in manifest.runs:
+        if entry.pair_id in invalidated or entry.adopted:
+            continue
+        if entry.terminal_status is TerminalStatus.COMPLETED:
+            return EvidenceError(
+                state=State.EVIDENCE_INVALID,
+                detail=(
+                    f"run {entry.run_id}: a completed attempt was discarded rather than "
+                    "adopted; retries are for runs that did not finish"
+                ),
+            )
 
     # Every pair with runs recorded is accounted for: adopted on both arms, or declared
     # invalid. Otherwise a pair whose numbers came out inconvenient can simply be left
