@@ -219,9 +219,12 @@ uv run python scripts/signoz_query.py --minutes 15 # read back what actually lan
 ```
 
 Each experiment becomes one trace — `morrow.experiment` → `morrow.pair` → `morrow.run` →
-one span per agent action — so the two arms of a pair sit side by side and the difference
+one span per exported event — so the two arms of a pair sit side by side and the difference
 between them is the shape of the trace, not a number in a table. The three published
-cassettes produce 3 experiment, 7 pair and 14 run spans over roughly 1,500 action spans.
+cassettes produce 3 experiment spans, 7 pair spans, 14 run spans and 441 exported event
+spans: 465 spans in total. The cassettes retain 1,553 source events; the 1,112 opaque events
+that carry no measurement signal remain checkable evidence but deliberately do not become
+spans.
 
 Every span is **re-derived by the verifier before it is sent**: the verdict on the trace is
 the one `morrow verify` gives for the same directory. They are tagged `evidence_mode=replay`
