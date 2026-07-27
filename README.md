@@ -229,6 +229,11 @@ so a dashboard filtered to live measurements does not pick them up, and they car
 wall-clock duration — that is a property of the machine that recorded them, not of the work
 the task required, so it is not in the published evidence and a replay has none to report.
 
+> **The committed SigNoz deployment is local-only.** `casting.yaml.lock` is the resolved
+> configuration `foundryctl` generated, committed so the deployment is reproducible from
+> this repository alone — which means it also carries that stack's default credentials in
+> plain sight. Do not expose this configuration beyond localhost without changing them.
+
 `gate` runs the same steps but stops before the report comparison, and it will not decide
 under a policy the cassette supplied: the thresholds, the metric parameters **and the
 sample-size floors** have to match the evaluator's own, or it returns

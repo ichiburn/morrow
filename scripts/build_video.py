@@ -63,11 +63,18 @@ Set Padding 50
 Set Theme "Catppuccin Mocha"
 Set TypingSpeed {typing}
 Hide
-Type "cd {root} && export PATH=$PWD/.venv/bin:$PATH && clear && printf ''"
+Type "cd {root}"
+Enter
+Type "export PATH=$PWD/.venv/bin:$PATH"
+Enter
+Type "clear"
 Enter
 Sleep 2s
 Show
 """
+# Each setup command is typed separately rather than chained with `&&`. Chained, a failing
+# `cd` would skip the `clear` too, and every visible frame would then carry the shell's
+# error — including the absolute path it could not enter.
 
 
 SHOTS: list[Shot] = [
@@ -76,7 +83,8 @@ SHOTS: list[Shot] = [
         narration=(
             "This is my own experiment failing its own check. MORROW measures whether a "
             "pull request makes the next change harder. Then it reported that it could not "
-            "trust the measurement — under a rule published before any data was collected."
+            "trust the measurement — under a decision rule fixed in the evaluator snapshot "
+            "before the treatment was recorded."
         ),
         body='''Type "morrow verify cassettes/treatment-replace-cache"
 Enter
@@ -87,9 +95,9 @@ Sleep 4s
     Shot(
         id="02-question",
         narration=(
-            "Every gate you already have answers whether the code works now. None of them "
-            "can tell you that a change just made tomorrow's work more expensive. That "
-            "question has no test, so nothing blocks on it, so it accumulates."
+            "Correctness, integration and security gates all answer whether the code "
+            "works now. None tells you a change just made tomorrow's work more "
+            "expensive. That question has no test, so nothing blocks on it."
         ),
         body='''Type "sed -n '24,29p' README.md"
 Enter
@@ -99,10 +107,11 @@ Sleep 4s
     Shot(
         id="03-instrument",
         narration=(
-            "MORROW registers a future change task in advance and runs it against both "
-            "sides, using a coding agent as the measuring instrument. Same model, same "
-            "prompt, same resource limits, each run in its own container. Three things are "
-            "counted: distinct files read, test cycles burned, lines actually changed."
+            "The design runs one registered future task against both sides, using a "
+            "coding agent as the instrument. Same model, same prompt, same limits, each "
+            "run in its own container. Three things are counted: distinct files read, "
+            "test cycles burned, lines changed. Built so far: the recorder and the "
+            "verifier — not pull-request orchestration."
         ),
         body='''Type "sed -n '/^| Component/,/^$/p' README.md | head -8"
 Enter
@@ -112,10 +121,11 @@ Sleep 5s
     Shot(
         id="04-result",
         narration=(
-            "Ten container runs produced this. Churn separated cleanly: every treatment "
-            "pair between three point seven and five point one, against a null control — "
-            "two clones of the same tree — that stayed under two point three. Files read "
-            "showed nothing at all, and that is reported too, not dropped."
+            "Ten container runs. Churn ratios three point seven five, five point one one "
+            "and four point zero, against a largest null ratio of two point two two. "
+            "Descriptive only — the experiment was invalidated, so this does not "
+            "establish the candidate caused it. Files read came out mixed, and that is "
+            "reported too."
         ),
         body='''Type "sed -n '/## Per-pair/,/^$/p' cassettes/treatment-replace-cache/report.md"
 Enter
@@ -125,12 +135,12 @@ Sleep 6s
     Shot(
         id="05-null",
         narration=(
-            "The null control compares a tree against itself, so its arms differ by nothing. "
-            "But one-sided aggregation is not symmetric. Relabelling which clone is the "
-            "baseline moves it from one point zero to one point seven four, past the "
-            "published tolerance band. Both orderings are committed, so neither could be "
-            "the one chosen after seeing the data. The pre-registered rule is to report the "
-            "experiment invalid, not to widen the band."
+            "The null compares a tree against itself, so anything it measures is "
+            "run-to-run variation. But one-sided aggregation is not symmetric: "
+            "relabelling which clone is baseline moves it from one point zero to one "
+            "point seven four, past the tolerance band. Both orderings are published. "
+            "The rule fixed beforehand is to report the experiment invalid, not to widen "
+            "the band."
         ),
         body='''Type "morrow verify cassettes/null-control-as-recorded"
 Enter
@@ -143,11 +153,10 @@ Sleep 4s
     Shot(
         id="06-signoz",
         narration=(
-            "The agent's trajectory is a trace, so it maps onto SigNoz without inventing "
-            "anything. Experiment, pair, run, then one span per action the agent took. "
-            "These are the rows SigNoz actually stored, read back from ClickHouse rather "
-            "than taken from the exporter's return value — because exporting without an "
-            "error is not evidence that anything landed."
+            "The agent's trajectory is a trace: experiment, pair, run, then one span per "
+            "action. This is read back from ClickHouse rather than taken from the "
+            "exporter's return value — exporting without an error is not evidence "
+            "anything landed."
         ),
         body='''Type "python scripts/export_cassettes.py"
 Enter
@@ -163,7 +172,8 @@ Sleep 7s
             "The verdict is not something you take on faith. Verify re-derives it from the "
             "evidence, then regenerates the report and compares it byte for byte. Change "
             "the evidence and cover your tracks in the manifest, and the report no longer "
-            "follows from it. Continuous integration runs this on every push."
+            "follows from it. Continuous integration runs this on every pull request, and "
+            "asserts both the exit code and the state."
         ),
         body='''Type "python scripts/tamper_demo.py"
 Enter
@@ -173,11 +183,11 @@ Sleep 7s
     Shot(
         id="08-built",
         narration=(
-            "Claude Code wrote the implementation. OpenAI Codex reviewed it adversarially "
-            "across six rounds, and found ways a cassette could have chosen its own verdict "
-            "— supplying the thresholds that judged it, asserting its own success, reusing "
-            "one run as two repetitions. Each of those is now a test that reproduces the "
-            "attack."
+            "Claude Code wrote the implementation and this video's build script. ChatGPT "
+            "contributed architecture and planning. Codex, with security and quality "
+            "passes, found ways a cassette could have chosen its own verdict — supplying "
+            "its own thresholds, asserting its own success, reusing one run as two. Each "
+            "is now a test. I reviewed every change."
         ),
         body='''Type "pytest -q 2>&1 | tail -3"
 Enter

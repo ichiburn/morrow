@@ -72,6 +72,10 @@ keep them.
 
 ## Before uploading
 
+- [ ] **Check what is in SigNoz's recent window first.** Shot 6 reads back everything the
+      `morrow` service stored in the last few minutes. If an unpublished live experiment
+      was exported just before the build, its rows appear on camera. Only the three
+      published cassettes should be in the window.
 - [ ] Watch it through once with sound
 - [ ] Confirm no absolute path, hostname or token is legible in any frame (the tapes `cd`
       into the repo with output hidden, so the prompt stays clean — but check)
