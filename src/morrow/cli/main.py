@@ -134,22 +134,21 @@ def show(cassette: Annotated[Path, _CASSETTE_ARGUMENT]) -> None:
 
     experiment = outcome.experiment
     if experiment is not None:
-        from morrow.domain.friction import component_ratio, is_small_sample
+        from morrow.domain.friction import pair_ratio_cells
 
-        for pair in sorted(experiment.successful_pairs, key=lambda p: p.pair_id):
-            cells: list[str] = []
-            for name in components:
-                base, cand = pair.baseline[name], pair.candidate[name]
-                if is_small_sample(base, cand, floor=policy.metrics.small_sample_floor):
-                    cells.append("small-sample")
-                else:
-                    ratio = component_ratio(
-                        base,
-                        cand,
-                        alpha=policy.metrics.alpha,
-                        clamp_ratio=policy.metrics.clamp_ratio,
-                    )
-                    cells.append(f"{ratio:.4f}")
+        by_component = {
+            name: pair_ratio_cells(
+                experiment.successful_pairs,
+                name,
+                alpha=policy.metrics.alpha,
+                clamp_ratio=policy.metrics.clamp_ratio,
+                small_sample_floor=policy.metrics.small_sample_floor,
+            )
+            for name in components
+        }
+        ordered = sorted(experiment.successful_pairs, key=lambda p: p.pair_id)
+        for row, pair in enumerate(ordered):
+            cells = [by_component[name][row] for name in components]
             typer.echo(f"  {pair.pair_id:>4}" + _column(cells, width))
 
     typer.echo("")

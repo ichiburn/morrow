@@ -57,6 +57,39 @@ def is_small_sample(baseline: int, candidate: int, *, floor: int) -> bool:
     return baseline < floor and candidate < floor
 
 
+#: What a per-pair ratio reads as when the pair was too small to compute one.
+SMALL_SAMPLE = "small-sample"
+
+
+def pair_ratio_cells(
+    successful_pairs: Sequence[PairMeasurement],
+    component: ComponentName,
+    *,
+    alpha: float,
+    clamp_ratio: float,
+    small_sample_floor: int,
+) -> tuple[str, ...]:
+    """One component's per-pair ratios, in pair order, formatted for display.
+
+    Lives here rather than in whatever is printing them because two callers need the same
+    answer for different reasons: the CLI shows it, and the video build checks that the
+    figures its narration reads out loud are the ones the evidence actually produces. Two
+    formatters would eventually disagree, and the one that disagreed silently would be the
+    one on camera.
+    """
+    cells: list[str] = []
+    for pair in sorted(successful_pairs, key=lambda measurement: measurement.pair_id):
+        baseline, candidate = pair.baseline[component], pair.candidate[component]
+        if is_small_sample(baseline, candidate, floor=small_sample_floor):
+            cells.append(SMALL_SAMPLE)
+        else:
+            ratio = component_ratio(
+                baseline, candidate, alpha=alpha, clamp_ratio=clamp_ratio
+            )
+            cells.append(f"{ratio:.4f}")
+    return tuple(cells)
+
+
 def median_ratio(ratios: Sequence[float]) -> float:
     """Median of the per-pair ratios. Even K averages the two middle values,
     which is why K is kept even (§3.1)."""

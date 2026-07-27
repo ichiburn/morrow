@@ -62,21 +62,32 @@ class Expect:
     A set of tolerated exit codes per *shot* was not enough. Three shots film commands that
     exit 2 on purpose alongside commands that exit 0, so the shot-wide set had to admit
     both — and then a clean verdict, a stale one, and a crash all satisfied it equally,
-    while the voiceover named a specific outcome. Pinning the code per command, and the
-    word the narration stakes itself on, is what makes the preflight an assertion rather
-    than a smoke test.
+    while the voiceover named a specific outcome.
+
+    The verdict and the figures are settled against the *evidence*, never against the text
+    the command prints — see :func:`evaluate`. The output is consulted for one thing only:
+    whether what the narration says is legible on screen while it says it.
     """
 
     code: int = 0
-    #: The verdict state the command must actually reach. Matched against the state's own
-    #: position in the output, never as a substring of the whole thing — a cassette can
-    #: contain a file named `INVALID_EXPERIMENT`, which makes verification report
-    #: EVIDENCE_INCOMPLETE with that name quoted in its reason and exit 2. A substring test
-    #: reads the cassette's own data as if it were the verdict.
+    #: The cassette the command decides about, as a directory name under `cassettes/`.
+    #: Given, everything below is checked against that cassette's evidence rather than
+    #: against the command's printed text.
+    cassette: str = ""
+    #: True for `verify`, which reports how the reproduction went; `show` reports the
+    #: assessment's own state instead.
+    reproduction: bool = False
+    #: The state the evidence must reach.
     state: str = ""
-    #: Figures the narration says out loud, which therefore have to be on screen while it
-    #: says them. Pinning the state is not enough: the ratios could change and keep the
-    #: same verdict, and the voiceover would go on quoting the old ones.
+    #: ``(component, cells)`` — the per-pair ratios the narration reads out for one
+    #: component, in pair order, exactly as the CLI renders them. Recomputed from the
+    #: evidence and *also* required on screen: a ratio can change while the verdict stays
+    #: put, and the voiceover would go on quoting the old figure.
+    ratios: tuple[str, tuple[str, ...]] | None = None
+    #: Single figures the narration names — the aggregate, the null control, the band.
+    #: Each must be one the evidence produces, and be on screen.
+    figures: tuple[str, ...] = ()
+    #: Plain text, for commands with no cassette behind them (`pytest`, `echo`).
     contains: tuple[str, ...] = ()
 
 
@@ -150,7 +161,14 @@ Enter
 Sleep 4s
 ''',
         audio_delay=2.1,
-        expect=(Expect(code=2, state="INVALID_EXPERIMENT"),),
+        expect=(
+            Expect(
+                code=2,
+                cassette="treatment-replace-cache",
+                reproduction=True,
+                state="INVALID_EXPERIMENT",
+            ),
+        ),
     ),
     Shot(
         id="02-question",
@@ -184,8 +202,9 @@ Sleep 5s
         # The ratios the next shot's narration reads out are on screen here.
         expect=(
             Expect(
+                cassette="treatment-replace-cache",
                 state="INVALID_EXPERIMENT",
-                contains=("3.7538", "5.1111", "4.0000"),
+                ratios=("final_churn", ("3.7538", "5.1111", "4.0000")),
             ),
         ),
     ),
@@ -205,7 +224,13 @@ Sleep 5s
         audio_delay=2.3,
         # `show` prints the assessment's own state — OK here — not the reproduction state
         # `verify` reports. Shot 5 is where EVIDENCE_REPRODUCED appears.
-        expect=(Expect(state="OK", contains=("0.4662", "0.4511")),),
+        expect=(
+            Expect(
+                cassette="null-control-as-recorded",
+                state="OK",
+                ratios=("final_churn", ("0.4662", "0.4511")),
+            ),
+        ),
     ),
     Shot(
         id="05-null",
@@ -226,8 +251,19 @@ Sleep 3s
 ''',
         audio_delay=2.1,
         expect=(
-            Expect(state="EVIDENCE_REPRODUCED", contains=("1.0000",)),
-            Expect(code=2, state="INVALID_EXPERIMENT", contains=("1.7403", "1.2000")),
+            Expect(
+                cassette="null-control-as-recorded",
+                reproduction=True,
+                state="EVIDENCE_REPRODUCED",
+                figures=("1.0000",),
+            ),
+            Expect(
+                code=2,
+                cassette="null-control-arms-swapped",
+                reproduction=True,
+                state="INVALID_EXPERIMENT",
+                figures=("1.7403", "1.2000"),
+            ),
         ),
     ),
     Shot(
@@ -309,7 +345,12 @@ Sleep 3s
 ''',
         audio_delay=2.1,
         expect=(
-            Expect(code=2, state="INVALID_EXPERIMENT"),
+            Expect(
+                code=2,
+                cassette="treatment-replace-cache",
+                reproduction=True,
+                state="INVALID_EXPERIMENT",
+            ),
             Expect(contains=("github.com/ichiburn/morrow",)),
         ),
     ),
@@ -381,21 +422,72 @@ def _shift_captions(path: Path, offset: float) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def states_in(output: str) -> set[str]:
-    """Every place a verdict state can legitimately appear in a command's output.
+def evaluate(want: Expect) -> tuple[str, tuple[str, ...], set[str]]:
+    """Decide what the cassette's evidence says, without reading any command's output.
 
-    Two shapes, because two commands print one. `verify` writes
-    ``<label> · <STATE> · exit <n>``; `show` puts the state on a line by itself. Both are
-    *positions*, which is the point — a state is only accepted where the CLI would put one,
-    never wherever it happens to appear in the text. Detail lines quote the cassette's own
-    filenames, and a cassette named after a verdict would otherwise supply that verdict.
+    Two rounds of review went into narrowing where a state could be read out of the
+    terminal text — first any substring, then a particular field — and each time a cassette
+    could still put one there, because the text quotes the cassette's own filenames. The
+    position is not the problem; reading the text at all is. So this evaluates the evidence
+    directly and returns typed values, which no filename can imitate.
+
+    Returns the state, the per-pair ratios for the component this shot's narration reads
+    out, and the single figures (the aggregate, the null control, the band) it may name.
     """
-    found: set[str] = set()
-    for line in output.splitlines():
-        stripped = line.strip()
-        fields = [field.strip() for field in stripped.split(" · ")]
-        found.add(fields[1] if len(fields) >= 2 else stripped)
-    return found
+    from morrow.adapters.cassette.verify import verify_path
+    from morrow.domain.assessment import Mode
+    from morrow.domain.friction import (
+        compute_component_frictions,
+        ffr_gate,
+        pair_ratio_cells,
+    )
+
+    outcome = verify_path(ROOT / "cassettes" / want.cassette, mode=Mode.VERIFY)
+    if outcome.manifest is None or outcome.assessment is None:
+        raise SystemExit(f"{want.cassette} could not be evaluated: {outcome.detail}")
+
+    policy = outcome.manifest.policy
+    ratios: tuple[str, ...] = ()
+    if want.ratios and outcome.experiment is not None:
+        component, _ = want.ratios
+        name = next(
+            metric for metric in policy.metrics.weights if metric.value == component
+        )
+        ratios = pair_ratio_cells(
+            outcome.experiment.successful_pairs,
+            name,
+            alpha=policy.metrics.alpha,
+            clamp_ratio=policy.metrics.clamp_ratio,
+            small_sample_floor=policy.metrics.small_sample_floor,
+        )
+
+    figures = {f"{policy.null_control.maximum_ffr:.4f}"}
+    if outcome.manifest.null_control_ffr_gate is not None:
+        figures.add(f"{outcome.manifest.null_control_ffr_gate:.4f}")
+    if outcome.experiment is not None:
+        # Recomputed rather than read off the assessment, because an invalidated experiment
+        # deliberately reports no aggregate — and the swapped null's own 1.7403 is exactly
+        # the figure that invalidated it. The number the narration says out loud only
+        # survives in a detail string otherwise, which is a sentence, not a value.
+        frictions, _ = compute_component_frictions(
+            outcome.experiment.successful_pairs,
+            list(policy.metrics.weights),
+            alpha=policy.metrics.alpha,
+            clamp_ratio=policy.metrics.clamp_ratio,
+            small_sample_floor=policy.metrics.small_sample_floor,
+        )
+        if frictions:
+            aggregate = ffr_gate(
+                {friction.name: friction.ratio for friction in frictions},
+                {friction.name: policy.metrics.weights[friction.name] for friction in frictions},
+            )
+            figures.add(f"{aggregate:.4f}")
+
+    # `verify` reports how the reproduction went; `show` reports the assessment's own
+    # state. Same evidence, two different questions — the one to check is the one the
+    # command on camera actually prints.
+    state = outcome.state if want.reproduction else outcome.assessment.state
+    return state.value, ratios, figures
 
 
 def preflight(shot: Shot) -> None:
@@ -431,16 +523,37 @@ def preflight(shot: Shot) -> None:
                 f"--- stdout ---\n{result.stdout[-1500:]}\n"
                 f"--- stderr ---\n{result.stderr[-1500:]}"
             )
-        if want.state and want.state not in states_in(output):
-            raise SystemExit(
-                f"{shot.id}: `{command}` did not reach {want.state}, which its narration "
-                f"names\n--- output ---\n{output[-1500:]}"
-            )
-        for figure in want.contains:
+        spoken: tuple[str, ...] = want.contains
+        if want.cassette:
+            state, ratios, figures = evaluate(want)
+            if state != want.state:
+                raise SystemExit(
+                    f"{shot.id}: cassettes/{want.cassette} evaluates to {state}, but the "
+                    f"narration says {want.state}"
+                )
+            if want.ratios is not None:
+                component, expected = want.ratios
+                if ratios != expected:
+                    raise SystemExit(
+                        f"{shot.id}: cassettes/{want.cassette} {component} is now "
+                        f"{list(ratios)}, but the narration reads out {list(expected)}"
+                    )
+                spoken += expected
+            for figure in want.figures:
+                if figure not in figures:
+                    raise SystemExit(
+                        f"{shot.id}: {figure} is not a figure cassettes/{want.cassette} "
+                        f"produces — it makes {sorted(figures)}"
+                    )
+            spoken += want.figures
+
+        # Everything the narration says has to be legible while it is said. The evidence
+        # decided whether the figures are right; this only asks whether they are on screen.
+        for figure in spoken:
             if figure not in output:
                 raise SystemExit(
-                    f"{shot.id}: `{command}` did not print {figure!r}, which the narration "
-                    f"says out loud\n--- output ---\n{output[-1500:]}"
+                    f"{shot.id}: `{command}` did not put {figure!r} on screen, and the "
+                    f"narration says it out loud\n--- output ---\n{output[-1500:]}"
                 )
         if not output.strip():
             raise SystemExit(f"{shot.id}: `{command}` produced no output to film")

@@ -49,11 +49,17 @@ and not a missing shot.
 The narration text is in `SHOTS` in `build_video.py` — that is the single source, so the
 script and the audio cannot disagree.
 
-Before filming, each command is executed and checked against a per-command expectation: its
-exit code, the verdict state it must reach, and any figure the narration reads out loud. The
-state is matched where the CLI puts one — `verify`'s `<label> · <STATE> · exit <n>` field,
-or `show`'s own line — never as a substring of the output, because detail lines quote the
-cassette's filenames and a cassette named after a verdict would otherwise supply it.
+Before filming, each command is executed and checked against a per-command expectation.
+**Nothing is decided by reading the command's output.** The state and every spoken figure
+are re-derived from the cassette's evidence — through the same domain code the CLI uses —
+and compared as typed values. Two review rounds went into narrowing *where* in the terminal
+text a verdict could be read from, first any substring and then a particular field, and a
+cassette could still put one there each time, because those lines quote the cassette's own
+filenames. The position was never the problem; reading the text at all was.
+
+The output is still checked, for a different question: whether the figures the narration
+speaks are legible on screen while it speaks them. The evidence decides whether they are
+right; the terminal only has to show them.
 
 What that does and does not cover: a changed verdict, a changed ratio that is spoken aloud,
 or a command that stops working will fail the build. A change to a number the narration does

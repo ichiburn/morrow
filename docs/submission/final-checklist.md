@@ -21,10 +21,10 @@ not stated publicly — the form itself accepting responses is the only reliable
       and no MUST_FIX from either reviewer
 - [x] **Blog drafted** — `docs/submission/blog-draft.md`
 - [x] **Video built** — `.video/out/morrow-demo.mp4`, 2:56, from `scripts/build_video.py`.
-      Not filmed by hand: every command in it is executed at build time and checked against
-      the verdict its narration names and the figures that narration reads out, so the build
-      fails rather than shipping footage of a different outcome. Figures the voiceover does
-      not speak are not pinned.
+      Not filmed by hand: every command in it is executed at build time, and the verdict and
+      figures its narration names are re-derived from the cassette's evidence rather than
+      read out of the terminal text — so the build fails rather than shipping footage of a
+      different outcome. Figures the voiceover does not speak are not pinned.
 - [x] **Form answers written** — `docs/submission/form-answers.md`
 
 ## Remaining — human only
