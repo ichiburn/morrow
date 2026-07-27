@@ -68,8 +68,16 @@ class Expect:
     """
 
     code: int = 0
-    #: A string the output must contain. The verdict state, for the shots that name one.
-    contains: str = ""
+    #: The verdict state the command must actually reach. Matched against the state's own
+    #: position in the output, never as a substring of the whole thing — a cassette can
+    #: contain a file named `INVALID_EXPERIMENT`, which makes verification report
+    #: EVIDENCE_INCOMPLETE with that name quoted in its reason and exit 2. A substring test
+    #: reads the cassette's own data as if it were the verdict.
+    state: str = ""
+    #: Figures the narration says out loud, which therefore have to be on screen while it
+    #: says them. Pinning the state is not enough: the ratios could change and keep the
+    #: same verdict, and the voiceover would go on quoting the old ones.
+    contains: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -142,7 +150,7 @@ Enter
 Sleep 4s
 ''',
         audio_delay=2.1,
-        expect=(Expect(code=2, contains="INVALID_EXPERIMENT"),),
+        expect=(Expect(code=2, state="INVALID_EXPERIMENT"),),
     ),
     Shot(
         id="02-question",
@@ -173,7 +181,13 @@ Enter
 Sleep 5s
 ''',
         audio_delay=2.2,
-        expect=(Expect(contains="INVALID_EXPERIMENT"),),
+        # The ratios the next shot's narration reads out are on screen here.
+        expect=(
+            Expect(
+                state="INVALID_EXPERIMENT",
+                contains=("3.7538", "5.1111", "4.0000"),
+            ),
+        ),
     ),
     Shot(
         id="04-result",
@@ -189,7 +203,9 @@ Enter
 Sleep 5s
 ''',
         audio_delay=2.3,
-        expect=(Expect(contains="null-control-as-recorded"),),
+        # `show` prints the assessment's own state — OK here — not the reproduction state
+        # `verify` reports. Shot 5 is where EVIDENCE_REPRODUCED appears.
+        expect=(Expect(state="OK", contains=("0.4662", "0.4511")),),
     ),
     Shot(
         id="05-null",
@@ -210,8 +226,8 @@ Sleep 3s
 ''',
         audio_delay=2.1,
         expect=(
-            Expect(contains="EVIDENCE_REPRODUCED"),
-            Expect(code=2, contains="INVALID_EXPERIMENT"),
+            Expect(state="EVIDENCE_REPRODUCED", contains=("1.0000",)),
+            Expect(code=2, state="INVALID_EXPERIMENT", contains=("1.7403", "1.2000")),
         ),
     ),
     Shot(
@@ -250,7 +266,7 @@ Enter
 Sleep 7s
 ''',
         audio_delay=3.5,
-        expect=(Expect(contains="EVIDENCE_STALE"),),
+        expect=(Expect(state="EVIDENCE_STALE"),),
     ),
     Shot(
         id="08-built",
@@ -269,7 +285,7 @@ Sleep 7s
 Enter
 Sleep 4s
 ''',
-        expect=(Expect(contains="passed"),),
+        expect=(Expect(contains=("passed",)),),
         footer=(
             "Built with",
             "Python 3.12  ·  Typer  ·  Docker  ·  OpenTelemetry / OTLP",
@@ -293,8 +309,8 @@ Sleep 3s
 ''',
         audio_delay=2.1,
         expect=(
-            Expect(code=2, contains="INVALID_EXPERIMENT"),
-            Expect(contains="github.com/ichiburn/morrow"),
+            Expect(code=2, state="INVALID_EXPERIMENT"),
+            Expect(contains=("github.com/ichiburn/morrow",)),
         ),
     ),
 ]
@@ -365,6 +381,23 @@ def _shift_captions(path: Path, offset: float) -> None:
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def states_in(output: str) -> set[str]:
+    """Every place a verdict state can legitimately appear in a command's output.
+
+    Two shapes, because two commands print one. `verify` writes
+    ``<label> · <STATE> · exit <n>``; `show` puts the state on a line by itself. Both are
+    *positions*, which is the point — a state is only accepted where the CLI would put one,
+    never wherever it happens to appear in the text. Detail lines quote the cassette's own
+    filenames, and a cassette named after a verdict would otherwise supply that verdict.
+    """
+    found: set[str] = set()
+    for line in output.splitlines():
+        stripped = line.strip()
+        fields = [field.strip() for field in stripped.split(" · ")]
+        found.add(fields[1] if len(fields) >= 2 else stripped)
+    return found
+
+
 def preflight(shot: Shot) -> None:
     """Run the shot's commands for real and refuse to film ones that fail.
 
@@ -398,11 +431,17 @@ def preflight(shot: Shot) -> None:
                 f"--- stdout ---\n{result.stdout[-1500:]}\n"
                 f"--- stderr ---\n{result.stderr[-1500:]}"
             )
-        if want.contains and want.contains not in output:
+        if want.state and want.state not in states_in(output):
             raise SystemExit(
-                f"{shot.id}: `{command}` did not print {want.contains!r}, which the "
-                f"narration relies on\n--- output ---\n{output[-1500:]}"
+                f"{shot.id}: `{command}` did not reach {want.state}, which its narration "
+                f"names\n--- output ---\n{output[-1500:]}"
             )
+        for figure in want.contains:
+            if figure not in output:
+                raise SystemExit(
+                    f"{shot.id}: `{command}` did not print {figure!r}, which the narration "
+                    f"says out loud\n--- output ---\n{output[-1500:]}"
+                )
         if not output.strip():
             raise SystemExit(f"{shot.id}: `{command}` produced no output to film")
 

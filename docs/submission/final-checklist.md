@@ -21,8 +21,10 @@ not stated publicly — the form itself accepting responses is the only reliable
       and no MUST_FIX from either reviewer
 - [x] **Blog drafted** — `docs/submission/blog-draft.md`
 - [x] **Video built** — `.video/out/morrow-demo.mp4`, 2:56, from `scripts/build_video.py`.
-      Not filmed by hand: every command in it is executed at build time, and the build
-      fails rather than shipping footage of an outcome the narration does not describe.
+      Not filmed by hand: every command in it is executed at build time and checked against
+      the verdict its narration names and the figures that narration reads out, so the build
+      fails rather than shipping footage of a different outcome. Figures the voiceover does
+      not speak are not pinned.
 - [x] **Form answers written** — `docs/submission/form-answers.md`
 
 ## Remaining — human only
@@ -37,9 +39,9 @@ not stated publicly — the form itself accepting responses is the only reliable
 
 ## Before rebuilding the video, re-run these
 
-The build asserts each command's exit code and the state its narration names, so a stale
-figure fails the build rather than reaching the cut. Re-run these anyway rather than
-trusting this file — SigNoz has to be up for the export shot:
+The build asserts each command's exit code, the state its narration names, and the figures
+that narration speaks. Re-run these anyway rather than trusting this file — SigNoz has to be
+up for the export shot, and it is outside what the build can check:
 
 ```bash
 uv run pytest -q                                           # 212 passed

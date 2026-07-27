@@ -42,13 +42,23 @@ To iterate on one shot: `uv run --group video python scripts/build_video.py 05`.
 | 8 | `08-built` | 212 tests passing; the tech stack; how Claude Code and Codex were used | 23.2s |
 | 9 | `09-close` | Back to the failing verdict, with the repository URL | 8.0s |
 
-Lengths are the shot durations the build writes to `.video/out/manifest.json`; they sum to
-the 176.2s cut.
+Lengths are the shot durations the build writes to `.video/out/manifest.json`, rounded here
+to one decimal — they add up to 176.3s as shown, against a 176.2s cut, which is the rounding
+and not a missing shot.
 
 The narration text is in `SHOTS` in `build_video.py` — that is the single source, so the
-script and the audio cannot disagree. Each command's expected exit code *and* a word its
-narration depends on are asserted before filming, so a shot cannot ship footage of an
-outcome other than the one being described.
+script and the audio cannot disagree.
+
+Before filming, each command is executed and checked against a per-command expectation: its
+exit code, the verdict state it must reach, and any figure the narration reads out loud. The
+state is matched where the CLI puts one — `verify`'s `<label> · <STATE> · exit <n>` field,
+or `show`'s own line — never as a substring of the output, because detail lines quote the
+cassette's filenames and a cassette named after a verdict would otherwise supply it.
+
+What that does and does not cover: a changed verdict, a changed ratio that is spoken aloud,
+or a command that stops working will fail the build. A change to a number the narration does
+*not* say — a component the voiceover passes over — will not. The check is against the
+narration, not against the whole screen.
 
 ### The opening shot is the failure, on purpose
 

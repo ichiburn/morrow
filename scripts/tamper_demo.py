@@ -47,7 +47,25 @@ def _state(verdict_line: str) -> str:
     return fields[1] if len(fields) >= 2 else ""
 
 
+def _assert_no_link_in_path(path: Path) -> None:
+    """Refuse a cassette reached through a symlink at any level.
+
+    ``symlinks=True`` covers what is *inside* the tree, not the way in. The root itself —
+    or `cassettes/`, or any ancestor — can be a link, and `copytree` follows those before
+    copying anything. ``ROOT`` is already fully resolved, so if appending the cassette's
+    name changes under resolution, some component is a link.
+    """
+    if path.resolve() != path:
+        raise SystemExit(
+            f"{path} is reached through a symlink; refusing to copy. Cassettes arrive from "
+            "pull requests, and a link here escapes the verifier's own limits."
+        )
+    if not path.is_dir():
+        raise SystemExit(f"{path} is not a directory")
+
+
 def main() -> None:
+    _assert_no_link_in_path(CASSETTE)
     with tempfile.TemporaryDirectory(prefix="morrow-tamper-") as scratch:
         working = Path(scratch) / CASSETTE.name
         # symlinks=True: cassettes arrive from pull requests, and copytree's default is to
