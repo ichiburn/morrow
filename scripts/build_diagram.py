@@ -1,6 +1,8 @@
 """Draw the trace-shape diagram the terminal footage cannot show.
 
-    uv run --with pillow python scripts/build_diagram.py
+    uv run --group video python scripts/build_diagram.py
+
+`build_video.py` runs this itself before filming, so it rarely needs to be called by hand.
 
 The whole argument for exporting to SigNoz is that the two arms of a pair hang off the same
 parent, so the difference between them is the *shape* of the subtree rather than a number

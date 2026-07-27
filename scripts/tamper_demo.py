@@ -41,10 +41,20 @@ def _verify(path: Path) -> tuple[str, int]:
     return (lines[0] if lines else "(no output)"), result.returncode
 
 
+def _state(verdict_line: str) -> str:
+    """The state field of ``<label> · <STATE> · exit <n>``, or "" if it is not one."""
+    fields = verdict_line.split(" · ")
+    return fields[1] if len(fields) >= 2 else ""
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory(prefix="morrow-tamper-") as scratch:
         working = Path(scratch) / CASSETTE.name
-        shutil.copytree(CASSETTE, working)
+        # symlinks=True: cassettes arrive from pull requests, and copytree's default is to
+        # follow links. A symlink pointing outside the cassette — or at something huge —
+        # would be dereferenced here, before the verifier's own symlink and size limits
+        # ever see it. Copying links as links keeps that check where it belongs.
+        shutil.copytree(CASSETTE, working, symlinks=True)
 
         print(
             f"# working on a copy of cassettes/{CASSETTE.name}"
@@ -53,6 +63,15 @@ def main() -> None:
         print("$ morrow verify <copy>")
         before, before_code = _verify(working)
         print(f"  {before}\n")
+
+        # The point of the demo is the *change* in verdict, so the starting verdict has to
+        # be the known one. Without this, a cassette that was already stale would produce
+        # the same two lines and the same passing assertion while demonstrating nothing.
+        if _state(before) != "INVALID_EXPERIMENT" or before_code != 2:
+            raise SystemExit(
+                f"the cassette did not start where the demo expects: {before} "
+                f"(exit {before_code})"
+            )
 
         churn_path = working / TARGET
         manifest_path = working / "manifest.json"
@@ -79,7 +98,7 @@ def main() -> None:
         # The narration says recomputation catches this. Assert it rather than asserting
         # it in prose: a demo that prints its own conclusion regardless of the result is
         # exactly the kind of unearned claim this project is about.
-        if "EVIDENCE_STALE" not in after or after_code != 2:
+        if _state(after) != "EVIDENCE_STALE" or after_code != 2:
             raise SystemExit(
                 f"tamper demo did not demonstrate anything: before={before_code} "
                 f"after={after_code} ({after})"

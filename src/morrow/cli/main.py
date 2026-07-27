@@ -159,7 +159,9 @@ def show(cassette: Annotated[Path, _CASSETTE_ARGUMENT]) -> None:
             f"    threshold {policy.decision.friction_threshold:.4f}"
         )
     else:
-        typer.echo("  FFR_gate     not reported — the experiment was invalidated")
+        # An absent FFR is not only invalidation: INCONCLUSIVE and ADAPTATION_REGRESSION
+        # also decide without one. Name the state rather than guessing at the reason.
+        typer.echo(f"  FFR_gate     not reported under {assessment.state.value}")
     if manifest.null_control_ffr_gate is not None:
         typer.echo(
             f"  null control {manifest.null_control_ffr_gate:.4f}"

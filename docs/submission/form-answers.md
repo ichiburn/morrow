@@ -48,7 +48,8 @@ widening the band. Both arm orderings are published so neither is hidden.
 
 The churn ratios came out 3.7538 / 5.1111 / 4.0000 against a largest null ratio of 2.2167.
 That is a descriptive observation, NOT a finding: the experiment was invalidated, its report deliberately
-carries no component medians and no aggregate FFR (the per-pair ratios above are published),
+carries no ratio medians and no aggregate FFR (the per-pair ratios above and the raw
+component medians are published),
 and nothing here establishes that the candidate caused the difference. Files-read came out mixed in direction (0.8947 / 0.8095 /
 1.4167) and is reported rather than dropped.
 
@@ -89,7 +90,7 @@ uv run morrow verify cassettes/treatment-replace-cache
 
 ## YouTube demo video (max 3 minutes)
 
-**TODO** — record from `docs/submission/video-script.md` (2:57) and paste the URL.
+**TODO** — upload `.video/out/morrow-demo.mp4` (2:56, already built) and paste the URL.
 
 ## How did you use SigNoz?
 

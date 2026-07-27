@@ -1,7 +1,7 @@
 """Build the demo video end to end: narration, terminal footage, and the final cut.
 
-    uv run python scripts/build_video.py           # everything
-    uv run python scripts/build_video.py 01 05     # just those shots, for iteration
+    uv run --group video python scripts/build_video.py        # everything
+    uv run --group video python scripts/build_video.py 01 05  # just those shots
 
 Nothing here is recorded by hand. Each shot is a `vhs` tape (real commands, really
 executed, typed on camera) plus a line of narration; the narration is synthesised, its
@@ -43,6 +43,8 @@ TAIL = 0.4
 #: and again in the delay before narration can start — so it is brisk.
 TYPING = "35ms"
 TYPING_SECONDS = 0.035
+#: The submission's hard ceiling. Not a style preference — a longer cut is not accepted.
+LIMIT_SECONDS = 180.0
 
 SHOT_ENV = {**os.environ, "PATH": f"{ROOT / '.venv' / 'bin'}:{os.environ['PATH']}"}
 
@@ -51,6 +53,23 @@ TITLE_SIZE = 30
 # ASS font sizes are relative to the subtitle canvas (288 lines by default), not to the
 # video. 9 lands at roughly 34px on a 1080p frame; 21 filled a third of the screen.
 CAPTION_SIZE = 9
+
+
+@dataclass(frozen=True)
+class Expect:
+    """What one filmed command has to actually do for the narration to be true.
+
+    A set of tolerated exit codes per *shot* was not enough. Three shots film commands that
+    exit 2 on purpose alongside commands that exit 0, so the shot-wide set had to admit
+    both — and then a clean verdict, a stale one, and a crash all satisfied it equally,
+    while the voiceover named a specific outcome. Pinning the code per command, and the
+    word the narration stakes itself on, is what makes the preflight an assertion rather
+    than a smoke test.
+    """
+
+    code: int = 0
+    #: A string the output must contain. The verdict state, for the shots that name one.
+    contains: str = ""
 
 
 @dataclass(frozen=True)
@@ -82,10 +101,9 @@ class Shot:
     #: 1080 lines, and a judge should not have to read the repository to learn what the
     #: thing is built out of.
     footer: tuple[str, ...] = ()
-    #: Exit codes this shot's commands may legitimately return. Several shots film a
-    #: deliberate failure — `verify` on an invalidated cassette exits 2 — so "zero or
-    #: bust" would reject the footage the video exists to show.
-    expect_codes: frozenset[int] = frozenset({0})
+    #: What each of this shot's commands must do, in the order they are typed. Left empty,
+    #: every command must exit 0 and its output is not inspected.
+    expect: tuple[Expect, ...] = ()
 
 
 PRELUDE = """Set Shell "bash"
@@ -124,7 +142,7 @@ Enter
 Sleep 4s
 ''',
         audio_delay=2.1,
-        expect_codes=frozenset({0, 2}),
+        expect=(Expect(code=2, contains="INVALID_EXPERIMENT"),),
     ),
     Shot(
         id="02-question",
@@ -155,6 +173,7 @@ Enter
 Sleep 5s
 ''',
         audio_delay=2.2,
+        expect=(Expect(contains="INVALID_EXPERIMENT"),),
     ),
     Shot(
         id="04-result",
@@ -170,6 +189,7 @@ Enter
 Sleep 5s
 ''',
         audio_delay=2.3,
+        expect=(Expect(contains="null-control-as-recorded"),),
     ),
     Shot(
         id="05-null",
@@ -189,7 +209,10 @@ Enter
 Sleep 3s
 ''',
         audio_delay=2.1,
-        expect_codes=frozenset({0, 2}),
+        expect=(
+            Expect(contains="EVIDENCE_REPRODUCED"),
+            Expect(code=2, contains="INVALID_EXPERIMENT"),
+        ),
     ),
     Shot(
         id="06-signoz",
@@ -227,6 +250,7 @@ Enter
 Sleep 7s
 ''',
         audio_delay=3.5,
+        expect=(Expect(contains="EVIDENCE_STALE"),),
     ),
     Shot(
         id="08-built",
@@ -245,6 +269,7 @@ Sleep 7s
 Enter
 Sleep 4s
 ''',
+        expect=(Expect(contains="passed"),),
         footer=(
             "Built with",
             "Python 3.12  ·  Typer  ·  Docker  ·  OpenTelemetry / OTLP",
@@ -267,7 +292,10 @@ Enter
 Sleep 3s
 ''',
         audio_delay=2.1,
-        expect_codes=frozenset({0, 2}),
+        expect=(
+            Expect(code=2, contains="INVALID_EXPERIMENT"),
+            Expect(contains="github.com/ichiburn/morrow"),
+        ),
     ),
 ]
 
@@ -348,7 +376,14 @@ def preflight(shot: Shot) -> None:
     `set -o pipefail` matters here: `pytest | tail` and `signoz_query | head` both return
     the *filter's* status, so a failed producer looks like success without it.
     """
-    for command in re.findall(r'Type "([^"]+)"', shot.body):
+    commands = re.findall(r'Type "([^"]+)"', shot.body)
+    expectations = shot.expect or tuple(Expect() for _ in commands)
+    if len(expectations) != len(commands):
+        raise SystemExit(
+            f"{shot.id}: {len(commands)} commands but {len(expectations)} expectations — "
+            "every filmed command needs one, or the shot asserts nothing about the rest"
+        )
+    for command, want in zip(commands, expectations, strict=True):
         result = subprocess.run(
             ["bash", "-o", "pipefail", "-c", command],
             capture_output=True,
@@ -356,14 +391,19 @@ def preflight(shot: Shot) -> None:
             cwd=ROOT,
             env=SHOT_ENV,
         )
-        if result.returncode not in shot.expect_codes:
+        output = result.stdout + result.stderr
+        if result.returncode != want.code:
             raise SystemExit(
-                f"{shot.id}: `{command}` exited {result.returncode}, "
-                f"expected one of {sorted(shot.expect_codes)}\n"
+                f"{shot.id}: `{command}` exited {result.returncode}, expected {want.code}\n"
                 f"--- stdout ---\n{result.stdout[-1500:]}\n"
                 f"--- stderr ---\n{result.stderr[-1500:]}"
             )
-        if not (result.stdout + result.stderr).strip():
+        if want.contains and want.contains not in output:
+            raise SystemExit(
+                f"{shot.id}: `{command}` did not print {want.contains!r}, which the "
+                f"narration relies on\n--- output ---\n{output[-1500:]}"
+            )
+        if not output.strip():
             raise SystemExit(f"{shot.id}: `{command}` produced no output to film")
 
 
@@ -431,7 +471,7 @@ def mux(shot: Shot, video: Path, audio: Path, captions: Path, index: int) -> Pat
     if shot.overlay:
         still = OUT / shot.overlay
         if not still.exists():
-            raise SystemExit(f"{shot.id}: overlay {still} is missing — run build_diagram.py")
+            raise SystemExit(f"{shot.id}: overlay {still} was not built")
         overlay = (
             f"movie='{still}'[still];"
             f"[base][still]overlay=0:0:enable='lt(t,{shot.overlay_seconds})'[base];"
@@ -489,6 +529,19 @@ def main() -> None:
         raise SystemExit(f"no shot matches {wanted}")
 
     OUT.mkdir(parents=True, exist_ok=True)
+
+    # The diagram is a build product, not an input: `.video/` is gitignored, so a fresh
+    # clone has no `diagram.png` and the shot that overlays it would fail on a missing
+    # file. Regenerating it every run also keeps it from going stale — it reads its numbers
+    # out of the cassettes, and a leftover copy from an older recording would put figures
+    # on screen that no longer match the ones beside it.
+    print("building the trace diagram from the cassettes")
+    _run(
+        [sys.executable, str(ROOT / "scripts" / "build_diagram.py")],
+        cwd=ROOT,
+        env=SHOT_ENV,
+    )
+
     parts: list[Path] = []
     manifest: list[dict[str, object]] = []
 
@@ -507,12 +560,21 @@ def main() -> None:
 
     total = sum(float(entry["shot_s"]) for entry in manifest)  # type: ignore[arg-type]
     print(f"{'total':14} {total:23.1f}s")
+    over_limit = 0.0
     if len(shots) == len(SHOTS):
         final = concatenate(parts)
-        print(f"\n{final}  ({duration_of(final):.1f}s)")
-        if duration_of(final) > 180:
-            print("WARNING: over the 3:00 submission limit", file=sys.stderr)
+        length = duration_of(final)
+        print(f"\n{final}  ({length:.1f}s)")
+        over_limit = length - LIMIT_SECONDS
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    # A hard limit, so it fails the build. The submission is rejected at 3:00.1 exactly as
+    # firmly as at 4:00, and a warning printed above a hundred lines of ffmpeg output is a
+    # warning nobody reads.
+    if over_limit > 0:
+        raise SystemExit(
+            f"the cut runs {over_limit:.1f}s over the {LIMIT_SECONDS:.0f}s submission "
+            "limit — shorten a narration and rebuild"
+        )
 
 
 if __name__ == "__main__":

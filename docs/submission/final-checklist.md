@@ -20,23 +20,26 @@ not stated publicly — the form itself accepting responses is the only reliable
 - [x] **Six rounds of adversarial review closed** — final round returned no CRITICAL/HIGH
       and no MUST_FIX from either reviewer
 - [x] **Blog drafted** — `docs/submission/blog-draft.md`
-- [x] **Video scripted** — `docs/submission/video-script.md`, 2:57
+- [x] **Video built** — `.video/out/morrow-demo.mp4`, 2:56, from `scripts/build_video.py`.
+      Not filmed by hand: every command in it is executed at build time, and the build
+      fails rather than shipping footage of an outcome the narration does not describe.
 - [x] **Form answers written** — `docs/submission/form-answers.md`
 
 ## Remaining — human only
 
-- [ ] **Record the video** from the script. Activate the venv first so the commands read as
-      a shipped CLI: `source .venv/bin/activate`. Hide absolute paths and hostnames.
+- [ ] **Watch the built video through once with sound**, and confirm no absolute path or
+      hostname is legible in any frame.
 - [ ] **Upload to YouTube**, unlisted or public. Check the audio plays in an incognito
       window — a silent upload is a failed submission.
 - [ ] **Publish the blog** on Dev.to, Medium or Substack. Not LinkedIn: the hackathon page
       says a social post does not count as a blog.
 - [ ] **Paste both URLs** into `form-answers.md` where marked TODO, then submit the form.
 
-## Before recording, re-run these
+## Before rebuilding the video, re-run these
 
-Every number spoken in the video must appear on screen in the same shot, so re-run rather
-than trusting this file:
+The build asserts each command's exit code and the state its narration names, so a stale
+figure fails the build rather than reaching the cut. Re-run these anyway rather than
+trusting this file — SigNoz has to be up for the export shot:
 
 ```bash
 uv run pytest -q                                           # 212 passed

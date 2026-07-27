@@ -51,7 +51,7 @@ it cannot measure**. This table is the contract.
 | C1 | The difference in work required for the same future task, across two repository states under identical conditions, can be extracted **reproducibly** | `morrow verify` re-derives the verdict from the recorded evidence and compares the regenerated report byte-for-byte with the recorded one | **Strong** — mechanically checkable |
 | C2 | For a given experiment, MORROW reports the observed per-component difference between baseline and candidate, without selection | All paired-run ratios are published, not just the median | **Strong** — a capability claim, not a result claim |
 | C3 | Any observed difference is reported alongside a null control acquired in the same recording session | Null and treatment run through an identical procedure, and **both arm orderings of the null are published** | **Medium** — a comparison, not a significance test |
-| C4 | The decision is deterministic and reproducible from the evidence | `verify` runs in CI on every push, over every committed cassette, with the expected exit code asserted per cassette | **Strong** |
+| C4 | The decision is deterministic and reproducible from the evidence | `verify` runs in CI on every pull request and every push to `main`, over every committed cassette, with the expected exit code *and* the expected state asserted per cassette | **Strong** |
 
 **C2 and C3 are claims about the procedure, not about the outcome.** Whether the coupled
 candidate actually turns out to cost more is a *result*, and results are reported as measured
@@ -169,9 +169,9 @@ This is the strongest observation in the recording — and it is an observation:
 experiment was invalidated, so it establishes nothing about causation.
 
 `test_cycles` points the same way but does **not** separate: the treatment median is 2.25,
-and the null's is 0.50 as recorded but 2.00 with the arms swapped. Two of the three pairs
-fell below the small-sample floor and were dropped rather than counted, which is most of
-why so little is left.
+and the null's is 0.50 as recorded but 2.00 with the arms swapped. One of the treatment's
+three pairs fell below the small-sample floor on this component, as did one of the null's
+two, and those were dropped rather than counted — which is part of why so little is left.
 
 ### What this does not say
 
@@ -181,9 +181,11 @@ arbitrary. One-sided aggregation is *not* symmetric, and swapping the labels mov
 null from **1.0000** to **1.7403** — across the published tolerance band of 1.20.
 
 The pre-registered rule for a null outside its band is to report the experiment as
-`INVALID_EXPERIMENT`, not to widen the band. Both null orderings are committed, so neither
-can be the one that was picked after seeing the data, and the treatment carries the worse
-of the two. All three verdicts and their exit codes are asserted in CI.
+`INVALID_EXPERIMENT`, not to widen the band. Both null orderings are committed and the
+treatment carries the worse of the two. That shows neither ordering is *hidden*; it is not
+by itself proof that the choice was fixed before the data was seen — repository history is
+chronology, not verifiable pre-registration. All three verdicts and their exit codes are
+asserted in CI.
 
 For completeness: the treatment's own aggregate works out to **`FFR_gate` = 2.0801**, past
 the 1.50 threshold. That number is stated here rather than in the report because it did not

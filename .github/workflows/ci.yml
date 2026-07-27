@@ -65,6 +65,13 @@ jobs:
           # a report that no longer follows from its evidence (EVIDENCE_STALE) exits
           # exactly like a validly invalidated experiment — so checking the code alone
           # would let a tampered cassette through unnoticed.
+          #
+          # The state is read out of the verdict line's own field, not matched as a
+          # substring of the whole output. Cassettes arrive from pull requests, and a
+          # substring test reads the attacker's data as if it were the verdict: a file
+          # named INVALID_EXPERIMENT makes verification report EVIDENCE_INCOMPLETE with
+          # that name quoted in the reason, which exits 2 and "contains" the state this
+          # build wanted. Parsing the field admits only what the CLI actually decided.
           for entry in "null-control-as-recorded:0:EVIDENCE_REPRODUCED" \
                        "null-control-arms-swapped:2:INVALID_EXPERIMENT" \
                        "treatment-replace-cache:2:INVALID_EXPERIMENT"; do
@@ -72,15 +79,21 @@ jobs:
             rest="${entry#*:}"
             want="${rest%%:*}"
             want_state="${rest#*:}"
-            out=$(uv run morrow verify "cassettes/$name" 2>&1) && got=0 || got=$?
+            # Kept on separate streams: stderr is unbuffered and stdout is not, so merging
+            # them can reorder the verdict away from line 1 and break the parse.
+            out=$(uv run morrow verify "cassettes/$name" 2>verify.err) && got=0 || got=$?
             printf '%s\n' "$out"
+            cat verify.err >&2
             if [ "$got" != "$want" ]; then
               echo "::error::cassettes/$name exited $got, expected $want"
               failed=1
             fi
-            case "$out" in
-              *"$want_state"*) ;;
-              *) echo "::error::cassettes/$name did not report $want_state"; failed=1 ;;
-            esac
+            # The verdict line is "<label> · <STATE> · exit <n>".
+            state=$(printf '%s\n' "$out" | head -n 1 | awk -F ' · ' '{print $2}')
+            if [ "$state" != "$want_state" ]; then
+              echo "::error::cassettes/$name reported state '$state', expected $want_state"
+              failed=1
+            fi
           done
+          rm -f verify.err
           exit "$failed"

@@ -119,9 +119,10 @@ Ten container runs. One task, one model (`claude-sonnet-5`), identical limits.
 is run-to-run variation — produced at most 2.2167 across both orderings.
 
 That is a **descriptive observation, not a finding.** The experiment was invalidated (below),
-so its report deliberately carries no component medians and no aggregate FFR — the per-pair ratios are still published, because those are the observation. Nothing here
-establishes that the coupled candidate *caused* the extra churn; three pairs under an
-invalidated null cannot carry that weight.
+so its report deliberately carries no ratio medians and no aggregate FFR. The per-pair
+ratios and the raw component medians are still published, because those are the
+observation. Nothing here establishes that the coupled candidate *caused* the extra churn;
+three pairs under an invalidated null cannot carry that weight.
 
 **The aggregate did not separate, and this is where it gets interesting.** A null control is
 symmetric: both arms are the same tree, so which clone you call "baseline" is arbitrary.
