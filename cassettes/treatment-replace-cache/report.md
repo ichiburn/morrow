@@ -24,7 +24,7 @@ Findings:
 
 ## Future Friction Ratio
 
-FFR was not computed for this verdict (no FFR-eligible successful pairs).
+FFR was not computed for this verdict — the verdict was decided before it applied (INVALID_EXPERIMENT).
 
 - Threshold (`friction_threshold`): 1.5000
 

@@ -22,6 +22,11 @@ The evidence from a recording is committed as a **cassette**, and `morrow verify
 re-derives the verdict from it. [Results](#results-recorded-2026-07-25) below are published
 that way: three cassettes, verifiable without trusting this README.
 
+**This prototype implements recording, evidence verification and gating. Pull-request
+orchestration is the next step** — the published experiment was recorded arm by arm with
+`scripts/record_one.py`, and the CLI decides from committed evidence rather than running
+agents itself.
+
 Existing CI gates answer "does the code work now."
 MORROW answers **"can this codebase still absorb the next change efficiently."**
 
@@ -46,7 +51,7 @@ it cannot measure**. This table is the contract.
 | C1 | The difference in work required for the same future task, across two repository states under identical conditions, can be extracted **reproducibly** | `morrow verify` re-derives the verdict from the recorded evidence and compares the regenerated report byte-for-byte with the recorded one | **Strong** — mechanically checkable |
 | C2 | For a given experiment, MORROW reports the observed per-component difference between baseline and candidate, without selection | All paired-run ratios are published, not just the median | **Strong** — a capability claim, not a result claim |
 | C3 | Any observed difference is reported alongside a null control acquired in the same recording session | Null and treatment run through an identical procedure, and **both arm orderings of the null are published** | **Medium** — a comparison, not a significance test |
-| C4 | The decision is deterministic and reproducible from the evidence | `verify` runs in CI on every push, over every committed cassette, with the expected exit code asserted per cassette | **Strong** |
+| C4 | The decision is deterministic and reproducible from the evidence | `verify` runs in CI on every pull request and every push to `main`, over every committed cassette, with the expected exit code *and* the expected state asserted per cassette | **Strong** |
 
 **C2 and C3 are claims about the procedure, not about the outcome.** Whether the coupled
 candidate actually turns out to cost more is a *result*, and results are reported as measured
@@ -158,15 +163,15 @@ all: `r90` 15/3/132, `r91` 15/1/61, `r20` 16/1/132, `r21` 11/2/59.
 
 ### What this says
 
-**`final_churn` separates, and it separates under either arm ordering.** The smallest
-treatment ratio (3.7538) is above the largest null ratio the null can produce (2.2167).
-All three treatment pairs sit clear of the noise floor. This is the strongest thing in the
-recording.
+**`final_churn` came out separated under either arm ordering.** The smallest treatment
+ratio (3.7538) is above the largest ratio the null produces (2.2167), in all three pairs.
+This is the strongest observation in the recording — and it is an observation: the
+experiment was invalidated, so it establishes nothing about causation.
 
 `test_cycles` points the same way but does **not** separate: the treatment median is 2.25,
-and the null's is 0.50 as recorded but 2.00 with the arms swapped. Two of the three pairs
-fell below the small-sample floor and were dropped rather than counted, which is most of
-why so little is left.
+and the null's is 0.50 as recorded but 2.00 with the arms swapped. One of the treatment's
+three pairs fell below the small-sample floor on this component, as did one of the null's
+two, and those were dropped rather than counted — which is part of why so little is left.
 
 ### What this does not say
 
@@ -176,9 +181,11 @@ arbitrary. One-sided aggregation is *not* symmetric, and swapping the labels mov
 null from **1.0000** to **1.7403** — across the published tolerance band of 1.20.
 
 The pre-registered rule for a null outside its band is to report the experiment as
-`INVALID_EXPERIMENT`, not to widen the band. Both null orderings are committed, so neither
-can be the one that was picked after seeing the data, and the treatment carries the worse
-of the two. All three verdicts and their exit codes are asserted in CI.
+`INVALID_EXPERIMENT`, not to widen the band. Both null orderings are committed and the
+treatment carries the worse of the two. That shows neither ordering is *hidden*; it is not
+by itself proof that the choice was fixed before the data was seen — repository history is
+chronology, not verifiable pre-registration. All three verdicts and their exit codes are
+asserted in CI.
 
 For completeness: the treatment's own aggregate works out to **`FFR_gate` = 2.0801**, past
 the 1.50 threshold. That number is stated here rather than in the report because it did not
@@ -221,13 +228,20 @@ uv run python scripts/signoz_query.py --minutes 15 # read back what actually lan
 Each experiment becomes one trace — `morrow.experiment` → `morrow.pair` → `morrow.run` →
 one span per agent action — so the two arms of a pair sit side by side and the difference
 between them is the shape of the trace, not a number in a table. The three published
-cassettes produce 3 experiment, 7 pair and 14 run spans over roughly 1,500 action spans.
+cassettes produce 3 experiment, 7 pair and 14 run spans over 441 event spans — 413
+actions plus 28 session/completion.
 
 Every span is **re-derived by the verifier before it is sent**: the verdict on the trace is
-the one `morrow verify` gives for the same directory. They are tagged `evidence_mode=replay`
-so a dashboard filtered to live measurements does not pick them up, and they carry no
+the one `morrow verify` gives for the same directory. Experiment, pair and run spans are tagged
+`morrow.evidence_mode=replay` so a dashboard filtered to live measurements does not pick
+them up (event spans inherit the trace rather than the attribute), and they carry no
 wall-clock duration — that is a property of the machine that recorded them, not of the work
 the task required, so it is not in the published evidence and a replay has none to report.
+
+> **The committed SigNoz deployment is local-only.** `casting.yaml.lock` is the resolved
+> configuration `foundryctl` generated, committed so the deployment is reproducible from
+> this repository alone — which means it also carries that stack's default credentials in
+> plain sight. Do not expose this configuration beyond localhost without changing them.
 
 `gate` runs the same steps but stops before the report comparison, and it will not decide
 under a policy the cassette supplied: the thresholds, the metric parameters **and the

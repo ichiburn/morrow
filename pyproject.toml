@@ -26,6 +26,11 @@ dev = [
     "mypy>=1.13",
     "types-pyyaml>=6.0",
 ]
+# Only `scripts/build_diagram.py` needs this, and only when rebuilding the demo video.
+# Kept out of `dev` so a contributor running the tests does not pay for an image library.
+video = [
+    "pillow>=11.0",
+]
 
 [build-system]
 requires = ["hatchling"]
