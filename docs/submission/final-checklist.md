@@ -8,8 +8,8 @@ not stated publicly — the form itself accepting responses is the only reliable
 - [x] **Repository public** — https://github.com/ichiburn/morrow
 - [x] **`casting.yaml` + `casting.yaml.lock` at the repo root** (mandatory)
 - [x] **SigNoz self-hosted and receiving** — verified by reading back from ClickHouse, not
-      by the exporter returning cleanly: 3 experiment, 7 pair, 14 run spans over ~1,500
-      action spans, run attributes carrying the measured counts
+      by the exporter returning cleanly: 3 experiment, 7 pair, 14 run and 441 event
+      spans (413 actions plus 28 session/completion), run attributes carrying the measured counts
 - [x] **Tests green** — 212 passed
 - [x] **Lint and types** — ruff clean, mypy strict clean
 - [x] **CI green**, including the step that verifies all three published cassettes and
@@ -20,7 +20,7 @@ not stated publicly — the form itself accepting responses is the only reliable
 - [x] **Six rounds of adversarial review closed** — final round returned no CRITICAL/HIGH
       and no MUST_FIX from either reviewer
 - [x] **Blog drafted** — `docs/submission/blog-draft.md`
-- [x] **Video scripted** — `docs/submission/video-script.md`, target 2:40
+- [x] **Video scripted** — `docs/submission/video-script.md`, 2:57
 - [x] **Form answers written** — `docs/submission/form-answers.md`
 
 ## Remaining — human only

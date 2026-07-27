@@ -31,6 +31,7 @@ from morrow.adapters.otel.export import (
 )
 from morrow.domain.assessment import EvidenceError
 from morrow.domain.cassette import Manifest
+from morrow.domain.events import EventKind
 from morrow.domain.metrics import ComponentName
 
 CASSETTE_ROOT = ROOT / "cassettes"
@@ -96,12 +97,30 @@ def export(name: str, *, endpoint: str) -> str:
     )
     trace_id = export_experiment(experiment, endpoint=endpoint)
     ffr = "n/a" if experiment.ffr_gate is None else f"{experiment.ffr_gate:.4f}"
-    spans = sum(1 + len(run.events) for run in experiment.runs)
     print(
         f"{name:30} {experiment.verdict:20} FFR {ffr:>7}  "
-        f"{len(experiment.runs)} runs / ~{spans} spans  trace {trace_id}"
+        f"{_span_count(experiment)} spans  trace {trace_id}"
     )
     return trace_id
+
+
+def _span_count(experiment: ExperimentTelemetry) -> int:
+    """Exactly the spans this export produces — one experiment, one per pair, one per run,
+    and one per event that is *not* opaque.
+
+    Counting every event here would overstate it by roughly a factor of three: opaque
+    events stay in the published evidence but are deliberately never exported, because a
+    trace that is mostly no-signal events is not observability. A demo that prints a number
+    the backend never received is the same kind of overclaim this project exists to avoid.
+    """
+    pairs = {run.pair_id for run in experiment.runs}
+    events = sum(
+        1
+        for run in experiment.runs
+        for event in run.events
+        if event.kind is not EventKind.OPAQUE
+    )
+    return 1 + len(pairs) + len(experiment.runs) + events
 
 
 def main() -> None:

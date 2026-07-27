@@ -21,10 +21,27 @@ import sys
 CLICKHOUSE_CONTAINER = "signoz-telemetrystore-clickhouse-0-0"
 SERVICE_NAME = "morrow"
 
+#: The traces to report on: the most recent N experiments, by their root spans.
+#:
+#: Filtering by time window alone counts every export that happened to land inside it, so
+#: re-running the exporter doubles the numbers and the readback stops describing any
+#: particular export. Anchoring on the newest experiment roots makes the answer "what the
+#: last run of the exporter stored", which is the question being asked.
+LATEST_TRACES = """
+SELECT DISTINCT traceID
+FROM signoz_traces.distributed_signoz_index_v3
+WHERE serviceName = '{service}'
+  AND name = 'morrow.experiment'
+  AND timestamp > now() - INTERVAL {minutes} MINUTE
+ORDER BY timestamp DESC
+LIMIT {traces}
+"""
+
 SPAN_BREAKDOWN = """
 SELECT name, count() AS spans
 FROM signoz_traces.distributed_signoz_index_v3
 WHERE serviceName = '{service}' AND timestamp > now() - INTERVAL {minutes} MINUTE
+  AND traceID IN ({traces})
 GROUP BY name
 ORDER BY spans DESC
 """
@@ -40,7 +57,8 @@ FROM signoz_traces.distributed_signoz_index_v3
 WHERE serviceName = '{service}'
   AND name = 'morrow.run'
   AND timestamp > now() - INTERVAL {minutes} MINUTE
-ORDER BY variant
+  AND traceID IN ({traces})
+ORDER BY variant, run_id
 """
 
 
@@ -60,13 +78,31 @@ def _query(sql: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--minutes", type=int, default=60)
+    parser.add_argument(
+        "--traces",
+        type=int,
+        default=3,
+        help="How many of the most recent experiment traces to report on (default 3).",
+    )
     args = parser.parse_args()
 
-    breakdown = _query(SPAN_BREAKDOWN.format(service=SERVICE_NAME, minutes=args.minutes))
-    print("--- spans by name ---")
+    latest = _query(
+        LATEST_TRACES.format(service=SERVICE_NAME, minutes=args.minutes, traces=args.traces)
+    )
+    if not latest:
+        raise SystemExit(f"no morrow experiment traces in the last {args.minutes} minute(s)")
+    trace_ids = ", ".join(f"'{line.strip()}'" for line in latest.splitlines() if line.strip())
+    print(f"--- {len(latest.splitlines())} most recent experiment trace(s) ---")
+
+    breakdown = _query(
+        SPAN_BREAKDOWN.format(service=SERVICE_NAME, minutes=args.minutes, traces=trace_ids)
+    )
+    print("\n--- spans by name ---")
     print(breakdown or "(none)")
 
-    runs = _query(RUN_SUMMARY.format(service=SERVICE_NAME, minutes=args.minutes))
+    runs = _query(
+        RUN_SUMMARY.format(service=SERVICE_NAME, minutes=args.minutes, traces=trace_ids)
+    )
     print("\n--- run spans (variant, run_id, files_read, test_cycles, churn) ---")
     print(runs or "(none)")
 

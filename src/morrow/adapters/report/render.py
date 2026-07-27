@@ -310,7 +310,17 @@ def render_markdown(
     lines.append("## Future Friction Ratio")
     lines.append("")
     if assessment.ffr_gate is None:
-        lines.append("FFR was not computed for this verdict (no FFR-eligible successful pairs).")
+        # Do not guess at the reason. An FFR is absent either because too few pairs were
+        # eligible to compute one, or because the verdict was reached before it mattered —
+        # an invalidated experiment has successful pairs and still reports no ratio. Saying
+        # "no eligible pairs" under a table that lists three is simply false.
+        eligible = len(successful)
+        why = (
+            f"only {eligible} successful pair(s)"
+            if eligible < policy.experiment.minimum_ffr_pairs
+            else f"the verdict was decided before it applied ({assessment.state.value})"
+        )
+        lines.append(f"FFR was not computed for this verdict — {why}.")
         lines.append("")
         lines.append(f"- Threshold (`friction_threshold`): {_fmt(threshold)}")
         lines.append("")

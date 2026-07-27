@@ -38,6 +38,16 @@ null control FFR_gate 1.7403 exceeds maximum_ffr 1.2000
 
 ## How SigNoz fits in
 
+**It is not in the decision path, and that is deliberate.** MORROW decides from the evidence
+first and exports afterwards, because a gate that blocks a build has to be deterministic and
+reproducible offline — `morrow verify` must reach the same verdict on a laptop with no
+telemetry backend running at all.
+
+So what is SigNoz for? The verdict is one line. The *trajectory* is what a human needs when
+they want to argue with it — which files the agent opened, how many times it went back to
+the tests, where the work actually went. That is an investigation, not a computation, and it
+is what a trace view is for.
+
 The agent's trajectory is the raw material, and a trajectory is a trace. That correspondence
 is exact enough that the mapping needed no cleverness:
 
@@ -82,8 +92,9 @@ morrow.experiment  3
 
 It goes to ClickHouse rather than through the SigNoz HTTP API deliberately: no session, no
 token, nothing to keep in a file, and the answer is the stored rows rather than a rendering
-of them. The query filters by service and time window, so those counts describe a clean
-single-export window rather than being a fingerprint of the cassettes.
+of them. It anchors on the newest experiment trace roots, so re-running the exporter does
+not double the counts — though without a batch identifier a partial export could still mix
+with an earlier one.
 
 **The collector could not register until the first organisation existed.** In my Foundry
 deployment it looped on `cannot create agent without orgId` while looking otherwise
@@ -92,7 +103,7 @@ healthy. I spent a while debugging my exporter for that.
 **Not every event deserves a span.** Across the three published cassettes, 1,112 events
 carry no measurement signal against 441 that do. The quiet ones stay in the published
 evidence — a reader can count them — but they never become spans. A trace that is
-five-sixths noise is not observability.
+seventy per cent noise is not observability.
 
 I also left one field out on purpose. Replayed runs omit the **measured** wall-clock
 duration. Wall time is a property of the machine that did the recording, not of the work
@@ -108,7 +119,7 @@ Ten container runs. One task, one model (`claude-sonnet-5`), identical limits.
 is run-to-run variation — produced at most 2.2167 across both orderings.
 
 That is a **descriptive observation, not a finding.** The experiment was invalidated (below),
-so its report deliberately carries no component ratios and no aggregate at all. Nothing here
+so its report deliberately carries no component medians and no aggregate FFR — the per-pair ratios are still published, because those are the observation. Nothing here
 establishes that the coupled candidate *caused* the extra churn; three pairs under an
 invalidated null cannot carry that weight.
 
@@ -241,9 +252,11 @@ integration, the tests, the documentation, and the script that builds the demo v
 **OpenAI Codex** performed adversarial design review before implementation began (three
 review stages across four independent executions — R2 was run twice) and code review
 afterwards, alongside security and quality review passes. **ChatGPT** contributed product
-architecture, planning, and document preparation. This blog post was drafted by Claude Code
-and fact-checked against the repository by Codex, which found several overstatements in the
-first draft. Every generated change was reviewed and validated by me.
+architecture, planning, and document preparation. The demo video's narration is **synthetic speech** (Microsoft `edge-tts`, voice
+`en-US-AndrewNeural`) driven from a script in the repository — no human voice was
+recorded. This blog post was drafted by Claude Code and fact-checked against the
+repository by Codex, which found eighteen overstatements in the first draft and ten more
+after the corrections. Every generated change was reviewed and validated by me.
 
 ---
 

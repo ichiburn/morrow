@@ -22,6 +22,11 @@ The evidence from a recording is committed as a **cassette**, and `morrow verify
 re-derives the verdict from it. [Results](#results-recorded-2026-07-25) below are published
 that way: three cassettes, verifiable without trusting this README.
 
+**This prototype implements recording, evidence verification and gating. Pull-request
+orchestration is the next step** — the published experiment was recorded arm by arm with
+`scripts/record_one.py`, and the CLI decides from committed evidence rather than running
+agents itself.
+
 Existing CI gates answer "does the code work now."
 MORROW answers **"can this codebase still absorb the next change efficiently."**
 
@@ -158,10 +163,10 @@ all: `r90` 15/3/132, `r91` 15/1/61, `r20` 16/1/132, `r21` 11/2/59.
 
 ### What this says
 
-**`final_churn` separates, and it separates under either arm ordering.** The smallest
-treatment ratio (3.7538) is above the largest null ratio the null can produce (2.2167).
-All three treatment pairs sit clear of the noise floor. This is the strongest thing in the
-recording.
+**`final_churn` came out separated under either arm ordering.** The smallest treatment
+ratio (3.7538) is above the largest ratio the null produces (2.2167), in all three pairs.
+This is the strongest observation in the recording — and it is an observation: the
+experiment was invalidated, so it establishes nothing about causation.
 
 `test_cycles` points the same way but does **not** separate: the treatment median is 2.25,
 and the null's is 0.50 as recorded but 2.00 with the arms swapped. Two of the three pairs
@@ -221,11 +226,13 @@ uv run python scripts/signoz_query.py --minutes 15 # read back what actually lan
 Each experiment becomes one trace — `morrow.experiment` → `morrow.pair` → `morrow.run` →
 one span per agent action — so the two arms of a pair sit side by side and the difference
 between them is the shape of the trace, not a number in a table. The three published
-cassettes produce 3 experiment, 7 pair and 14 run spans over roughly 1,500 action spans.
+cassettes produce 3 experiment, 7 pair and 14 run spans over 441 event spans — 413
+actions plus 28 session/completion.
 
 Every span is **re-derived by the verifier before it is sent**: the verdict on the trace is
-the one `morrow verify` gives for the same directory. They are tagged `evidence_mode=replay`
-so a dashboard filtered to live measurements does not pick them up, and they carry no
+the one `morrow verify` gives for the same directory. Experiment, pair and run spans are tagged
+`morrow.evidence_mode=replay` so a dashboard filtered to live measurements does not pick
+them up (event spans inherit the trace rather than the attribute), and they carry no
 wall-clock duration — that is a property of the machine that recorded them, not of the work
 the task required, so it is not in the published evidence and a replay has none to report.
 

@@ -18,10 +18,12 @@ Requires `vhs` (with `ttyd`), `ffmpeg`, and `edge-tts` on PATH.
 from __future__ import annotations
 
 import json
+import os
+import re
 import shutil
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,9 +38,19 @@ RATE = "-4%"
 FONT_SIZE = 30
 WIDTH, HEIGHT = 1920, 1080
 #: Seconds of stillness after the narration ends, so a cut never lands on the last syllable.
-TAIL = 0.9
-#: Typing speed. Slow enough to read, fast enough not to waste a three-minute budget.
-TYPING = "45ms"
+TAIL = 0.4
+#: Typing speed. Every millisecond here is paid twice — once watching the command appear,
+#: and again in the delay before narration can start — so it is brisk.
+TYPING = "35ms"
+TYPING_SECONDS = 0.035
+
+SHOT_ENV = {**os.environ, "PATH": f"{ROOT / '.venv' / 'bin'}:{os.environ['PATH']}"}
+
+TITLE_FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+TITLE_SIZE = 30
+# ASS font sizes are relative to the subtitle canvas (288 lines by default), not to the
+# video. 9 lands at roughly 34px on a 1080p frame; 21 filled a third of the screen.
+CAPTION_SIZE = 9
 
 
 @dataclass(frozen=True)
@@ -46,13 +58,34 @@ class Shot:
     """One shot: what is said, and what is on screen while it is said."""
 
     id: str
+    #: Shown in the corner for the whole shot. Terminal output alone does not tell a
+    #: viewer what they are being shown; this does.
+    title: str
     narration: str
     #: vhs commands. `{prompt}` marks where the shell prompt should look clean.
     body: str
-    #: Extra seconds of footage before the narration starts, for shots that need the
-    #: viewer to read something before being told about it.
-    lead_in: float = 0.0
-    env: dict[str, str] = field(default_factory=dict)
+    #: Seconds to hold the narration back so it lands on a finished screen.
+    #:
+    #: This is the difference between a video whose length matches its audio and one that
+    #: is actually in sync. The footage types its command before any output exists, so
+    #: narration starting at zero talks about a result the viewer cannot see yet. Delay it
+    #: past the typing and the command's own latency, and the words arrive with the thing
+    #: they describe.
+    audio_delay: float = 1.6
+    #: A still to hold over the footage for the first `overlay_seconds`, for shots whose
+    #: terminal output cannot show the thing being described. The trace hierarchy is the
+    #: clearest example: a table of counts states the difference between two runs, but only
+    #: a picture shows that one subtree is bigger than the other.
+    overlay: str | None = None
+    overlay_seconds: float = 0.0
+    #: Lines to print in the empty lower half of the frame. Terminal output rarely fills
+    #: 1080 lines, and a judge should not have to read the repository to learn what the
+    #: thing is built out of.
+    footer: tuple[str, ...] = ()
+    #: Exit codes this shot's commands may legitimately return. Several shots film a
+    #: deliberate failure — `verify` on an invalidated cassette exits 2 — so "zero or
+    #: bust" would reject the footage the video exists to show.
+    expect_codes: frozenset[int] = frozenset({0})
 
 
 PRELUDE = """Set Shell "bash"
@@ -80,122 +113,148 @@ Show
 SHOTS: list[Shot] = [
     Shot(
         id="01-verdict",
+        title="The result, first — this experiment failed its own check",
         narration=(
             "This is my own experiment failing its own check. MORROW measures whether a "
-            "pull request makes the next change harder. Then it reported that it could not "
-            "trust the measurement — under a decision rule fixed in the evaluator snapshot "
-            "before the treatment was recorded."
+            "pull request makes the next change harder — then reported that it could not "
+            "trust the measurement, under a rule fixed before the treatment was recorded."
         ),
         body='''Type "morrow verify cassettes/treatment-replace-cache"
 Enter
 Sleep 4s
 ''',
-        lead_in=1.2,
+        audio_delay=2.1,
+        expect_codes=frozenset({0, 2}),
     ),
     Shot(
         id="02-question",
+        title="The question no existing gate asks",
         narration=(
             "Correctness, integration and security gates all answer whether the code "
             "works now. None tells you a change just made tomorrow's work more "
             "expensive. That question has no test, so nothing blocks on it."
         ),
-        body='''Type "sed -n '24,29p' README.md"
+        body='''Type "morrow --help"
 Enter
 Sleep 4s
 ''',
+        audio_delay=1.4,
     ),
     Shot(
         id="03-instrument",
+        title="What gets measured",
         narration=(
-            "The design runs one registered future task against both sides, using a "
-            "coding agent as the instrument. Same model, same prompt, same limits, each "
-            "run in its own container. Three things are counted: distinct files read, "
-            "test cycles burned, lines changed. Built so far: the recorder and the "
-            "verifier — not pull-request orchestration."
+            "One registered future task, run against both sides with a coding agent as "
+            "the instrument. Same model, same prompt, same limits, each in its own "
+            "container. Counted: distinct files read, test cycles burned, lines changed. "
+            "This prototype implements recording, evidence verification and gating. "
+            "Pull-request orchestration is the next step."
         ),
-        body='''Type "sed -n '/^| Component/,/^$/p' README.md | head -8"
+        body='''Type "morrow show cassettes/treatment-replace-cache"
 Enter
 Sleep 5s
 ''',
+        audio_delay=2.2,
     ),
     Shot(
         id="04-result",
+        title="The null control, for comparison",
         narration=(
-            "Ten container runs. Churn ratios three point seven five, five point one one "
-            "and four point zero, against a largest null ratio of two point two two. "
-            "Descriptive only — the experiment was invalidated, so this does not "
-            "establish the candidate caused it. Files read came out mixed, and that is "
-            "reported too."
+            "And this is the null control — two clones of the same tree. Its churn ratios "
+            "sit below one, against the treatment's three point seven five, five point "
+            "one one and four point zero. Descriptive only: the experiment was "
+            "invalidated, so none of this establishes the candidate caused the difference."
         ),
-        body='''Type "sed -n '/## Per-pair/,/^$/p' cassettes/treatment-replace-cache/report.md"
+        body='''Type "morrow show cassettes/null-control-as-recorded"
 Enter
-Sleep 6s
+Sleep 5s
 ''',
+        audio_delay=2.3,
     ),
     Shot(
         id="05-null",
+        title="The null control — and the rule that fired",
         narration=(
             "The null compares a tree against itself, so anything it measures is "
             "run-to-run variation. But one-sided aggregation is not symmetric: "
             "relabelling which clone is baseline moves it from one point zero to one "
-            "point seven four, past the tolerance band. Both orderings are published. "
-            "The rule fixed beforehand is to report the experiment invalid, not to widen "
-            "the band."
+            "point seven four, past the band. The rule fixed beforehand is to report the "
+            "experiment invalid, not widen it."
         ),
         body='''Type "morrow verify cassettes/null-control-as-recorded"
 Enter
-Sleep 3s
+Sleep 4s
 Type "morrow verify cassettes/null-control-arms-swapped"
 Enter
-Sleep 4s
+Sleep 3s
 ''',
+        audio_delay=2.1,
+        expect_codes=frozenset({0, 2}),
     ),
     Shot(
         id="06-signoz",
+        title="SigNoz — not the judge, the audit trail",
         narration=(
-            "The agent's trajectory is a trace: experiment, pair, run, then one span per "
-            "action. This is read back from ClickHouse rather than taken from the "
-            "exporter's return value — exporting without an error is not evidence "
-            "anything landed."
+            "The verdict is decided from the evidence before any of this is sent, so "
+            "SigNoz is not in the decision path — the gate has to stay deterministic. "
+            "What it is for is the human afterwards, auditing what the agent actually "
+            "did: experiment, pair, run, and the two arms of a comparison side by side."
         ),
         body='''Type "python scripts/export_cassettes.py"
 Enter
-Sleep 6s
-Type "python scripts/signoz_query.py --minutes 5 | head -24"
+Sleep 8s
+Type "python scripts/signoz_query.py --minutes 30 | head -22"
 Enter
-Sleep 7s
+Sleep 5s
 ''',
+        # The export takes several seconds; the diagram covers exactly that wait, and the
+        # narration's opening line describes the hierarchy it draws.
+        audio_delay=1.8,
+        overlay="diagram.png",
+        overlay_seconds=8.5,
     ),
     Shot(
         id="07-verify",
+        title="Tamper with the evidence, and the report stops following",
         narration=(
-            "The verdict is not something you take on faith. Verify re-derives it from the "
-            "evidence, then regenerates the report and compares it byte for byte. Change "
-            "the evidence and cover your tracks in the manifest, and the report no longer "
-            "follows from it. Continuous integration runs this on every pull request, and "
-            "asserts both the exit code and the state."
+            "The verdict is not something you take on faith. Verify re-derives it from "
+            "the evidence and compares the report byte for byte. Edit the evidence and fix "
+            "the digest to match — the report no longer follows from it. CI runs this on "
+            "every pull request."
         ),
         body='''Type "python scripts/tamper_demo.py"
 Enter
 Sleep 7s
 ''',
+        audio_delay=3.5,
     ),
     Shot(
         id="08-built",
+        title="How it was built, and what review found",
         narration=(
-            "Claude Code wrote the implementation and this video's build script. ChatGPT "
-            "contributed architecture and planning. Codex, with security and quality "
-            "passes, found ways a cassette could have chosen its own verdict — supplying "
-            "its own thresholds, asserting its own success, reusing one run as two. Each "
-            "is now a test. I reviewed every change."
+            "Claude Code wrote the implementation and this build script; ChatGPT, "
+            "architecture and planning. Codex and the security and quality passes found "
+            "ways a cassette could choose its own verdict — its own thresholds, its own "
+            "success, one run counted as two. Each is now a test. I reviewed every "
+            "change."
         ),
-        body='''Type "pytest -q 2>&1 | tail -3"
+        # No `-q` here: pyproject already passes one via `addopts`, and a second suppresses
+        # the summary line entirely — the shot showed a wall of progress dots and never
+        # said how many tests passed.
+        body='''Type "pytest 2>&1 | tail -2"
 Enter
-Sleep 5s
+Sleep 4s
 ''',
+        footer=(
+            "Built with",
+            "Python 3.12  ·  Typer  ·  Docker  ·  OpenTelemetry / OTLP",
+            "SigNoz / ClickHouse  ·  Foundry  ·  GitHub Actions",
+        ),
+        audio_delay=2.2,
     ),
     Shot(
         id="09-close",
+        title="MORROW",
         narration=(
             "An instrument you can only trust when it agrees with you is not an instrument. "
             "MORROW."
@@ -207,6 +266,8 @@ Type "echo github.com/ichiburn/morrow"
 Enter
 Sleep 3s
 ''',
+        audio_delay=2.1,
+        expect_codes=frozenset({0, 2}),
     ),
 ]
 
@@ -231,38 +292,95 @@ def duration_of(path: Path) -> float:
     return float(probe.stdout.strip())
 
 
-def narrate(shot: Shot) -> Path:
-    """Synthesise the voiceover and return its path."""
-    target = OUT / f"{shot.id}.mp3"
+def narrate(shot: Shot) -> tuple[Path, Path]:
+    """Synthesise the voiceover and its timed subtitles.
+
+    The subtitles are not an accessibility afterthought. Terminal footage is dense and
+    unlabelled, and a viewer who cannot follow the narration has no way to work out what
+    they are looking at — the words on screen are what make the picture legible.
+    """
+    audio = OUT / f"{shot.id}.mp3"
+    captions = OUT / f"{shot.id}.srt"
     _run(
         [
             # `--rate=-4%` rather than `--rate -4%`: a negative value as a separate token
             # is parsed as another flag.
             "edge-tts", "--voice", VOICE, f"--rate={RATE}",
-            "--text", shot.narration, "--write-media", str(target),
+            "--text", shot.narration, "--write-media", str(audio),
+            "--write-subtitles", str(captions),
         ]
     )
-    return target
+    _shift_captions(captions, shot.audio_delay)
+    return audio, captions
 
 
-def record(shot: Shot, audio_seconds: float) -> Path:
-    """Record the terminal footage, padded so it outlasts the narration.
+def _shift_captions(path: Path, offset: float) -> None:
+    """Move every cue later by ``offset`` seconds, matching the delayed narration."""
 
-    The tape's own sleeps set the pace of the commands; whatever is left over after the
-    narration finishes becomes a still hold at the end. If the commands take *longer* than
-    the narration, nothing is trimmed — the picture is what is real, and the audio simply
-    finishes early.
+    def shift(stamp: str) -> str:
+        hours, minutes, rest = stamp.split(":")
+        seconds, millis = rest.split(",")
+        total = (
+            int(hours) * 3600 + int(minutes) * 60 + int(seconds) + int(millis) / 1000
+        ) + offset
+        h, remainder = divmod(total, 3600)
+        m, sec = divmod(remainder, 60)
+        return f"{int(h):02d}:{int(m):02d}:{int(sec):02d},{round(sec % 1 * 1000):03d}"
+
+    lines = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if "-->" in line:
+            start, end = (part.strip() for part in line.split("-->"))
+            lines.append(f"{shift(start)} --> {shift(end)}")
+        else:
+            lines.append(line)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def preflight(shot: Shot) -> None:
+    """Run the shot's commands for real and refuse to film ones that fail.
+
+    vhs reports whether it recorded, not whether what it recorded worked. Without this the
+    build happily ships footage of a traceback — which would also put an absolute path on
+    screen — or of a command that silently produced nothing, while the narration explains
+    the result it was supposed to have produced.
+
+    `set -o pipefail` matters here: `pytest | tail` and `signoz_query | head` both return
+    the *filter's* status, so a failed producer looks like success without it.
+    """
+    for command in re.findall(r'Type "([^"]+)"', shot.body):
+        result = subprocess.run(
+            ["bash", "-o", "pipefail", "-c", command],
+            capture_output=True,
+            text=True,
+            cwd=ROOT,
+            env=SHOT_ENV,
+        )
+        if result.returncode not in shot.expect_codes:
+            raise SystemExit(
+                f"{shot.id}: `{command}` exited {result.returncode}, "
+                f"expected one of {sorted(shot.expect_codes)}\n"
+                f"--- stdout ---\n{result.stdout[-1500:]}\n"
+                f"--- stderr ---\n{result.stderr[-1500:]}"
+            )
+        if not (result.stdout + result.stderr).strip():
+            raise SystemExit(f"{shot.id}: `{command}` produced no output to film")
+
+
+def record(shot: Shot) -> Path:
+    """Record the terminal footage at the pace the tape sets.
+
+    No attempt is made to stretch the recording to the narration's length. vhs does not
+    reliably render a long trailing `Sleep` — it stops once the terminal goes quiet — so
+    the padding is done in :func:`mux`, where the exact durations are known and ffmpeg can
+    hold the final frame for as long as it takes.
     """
     video = OUT / f"{shot.id}.mp4"
     tape = OUT / f"{shot.id}.tape"
     prelude = PRELUDE.format(
         font=FONT_SIZE, width=WIDTH, height=HEIGHT, typing=TYPING, root=ROOT
     )
-    lead = f"Sleep {shot.lead_in}s\n" if shot.lead_in else ""
-    hold = max(1.0, audio_seconds + TAIL - _tape_seconds(shot.body) - shot.lead_in)
-    tape.write_text(
-        f'Output "{video}"\n{prelude}{lead}{shot.body}Sleep {hold:.1f}s\n', encoding="utf-8"
-    )
+    tape.write_text(f'Output "{video}"\n{prelude}{shot.body}', encoding="utf-8")
     _run(["vhs", str(tape)], cwd=ROOT)
     return video
 
@@ -276,22 +394,68 @@ def _tape_seconds(body: str) -> float:
             total += float(stripped[len("Sleep ") : -1])
         elif stripped.startswith("Type "):
             # Typing is animated, so long commands cost real time.
-            total += len(stripped) * 0.045
+            total += len(stripped) * TYPING_SECONDS
     return total
 
 
-def mux(shot: Shot, video: Path, audio: Path) -> Path:
-    """Lay the narration over the footage, holding the last frame if the audio runs on."""
+def mux(shot: Shot, video: Path, audio: Path, captions: Path, index: int) -> Path:
+    """Compose the finished shot: footage, title, subtitles, and delayed narration.
+
+    The picture is held on its final frame until the narration has finished, so a shot is
+    always ``delay + narration + tail`` long regardless of how quickly its commands ran.
+    """
     merged = OUT / f"{shot.id}.mixed.mp4"
+    audio_seconds = duration_of(audio)
+    filmed = duration_of(video)
+    wanted = shot.audio_delay + audio_seconds + TAIL
+    pad = max(0.0, wanted - filmed)
+    delay_ms = int(shot.audio_delay * 1000)
+
+    label = f"{index}/{len(SHOTS)}   {shot.title}".replace(":", r"\:").replace("'", "")
+    style = (
+        f"FontName=DejaVu Sans,FontSize={CAPTION_SIZE},PrimaryColour=&H00FFFFFF,"
+        "OutlineColour=&H00101018,BackColour=&HB0101018,BorderStyle=3,Outline=2,Shadow=0,"
+        "Alignment=2,MarginV=16"
+    )
+    footer = ""
+    for line, text in enumerate(shot.footer):
+        safe = text.replace(":", r"\:").replace("'", "")
+        weight = TITLE_SIZE + 8 if line == 0 else TITLE_SIZE
+        colour = "0xcdd6f4" if line == 0 else "0x9399b2"
+        footer += (
+            f",drawtext=fontfile={TITLE_FONT}:text='{safe}':x=70:"
+            f"y={620 + line * 58}:fontsize={weight}:fontcolor={colour}:borderw=0"
+        )
+
+    overlay = ""
+    if shot.overlay:
+        still = OUT / shot.overlay
+        if not still.exists():
+            raise SystemExit(f"{shot.id}: overlay {still} is missing — run build_diagram.py")
+        overlay = (
+            f"movie='{still}'[still];"
+            f"[base][still]overlay=0:0:enable='lt(t,{shot.overlay_seconds})'[base];"
+        )
+
+    chain = (
+        # tpad clones the last frame so the terminal stays on screen instead of cutting to
+        # black mid-sentence; the title sits in the corner for the whole shot; the burnt-in
+        # captions carry the narration for anyone who cannot follow the audio.
+        f"[0:v]tpad=stop_mode=clone:stop_duration={pad:.2f}[base];"
+        + overlay
+        + f"[base]drawtext=fontfile={TITLE_FONT}:text='{label}':x=60:y=36:"
+        f"fontsize={TITLE_SIZE}:fontcolor=0x7d8299:borderw=0" + footer + ","
+        f"subtitles='{captions}':force_style='{style}'[v];"
+        f"[1:a]adelay={delay_ms}:all=1[a]"
+    )
     _run(
         [
             "ffmpeg", "-y", "-loglevel", "error",
             "-i", str(video), "-i", str(audio),
-            # tpad freezes the final frame rather than cutting to black if the narration
-            # outlasts the recording; -shortest then ends on whichever finishes last.
-            "-vf", "tpad=stop_mode=clone:stop_duration=3",
+            "-filter_complex", chain,
+            "-map", "[v]", "-map", "[a]",
             "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
-            "-c:a", "aac", "-b:a", "192k", "-shortest", str(merged),
+            "-c:a", "aac", "-b:a", "192k", "-t", f"{wanted:.2f}", str(merged),
         ]
     )
     return merged
@@ -329,10 +493,11 @@ def main() -> None:
     manifest: list[dict[str, object]] = []
 
     for shot in shots:
-        audio = narrate(shot)
+        preflight(shot)
+        audio, captions = narrate(shot)
         seconds = duration_of(audio)
-        video = record(shot, seconds)
-        merged = mux(shot, video, audio)
+        video = record(shot)
+        merged = mux(shot, video, audio, captions, SHOTS.index(shot) + 1)
         length = duration_of(merged)
         parts.append(merged)
         manifest.append(

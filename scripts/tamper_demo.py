@@ -29,15 +29,16 @@ CASSETTE = ROOT / "cassettes" / "treatment-replace-cache"
 TARGET = "r1.churn.json"
 
 
-def _verify(path: Path) -> str:
-    """Run the real CLI and return its verdict line."""
+def _verify(path: Path) -> tuple[str, int]:
+    """Run the real CLI; return its verdict line and its exit code."""
     result = subprocess.run(
         [sys.executable, "-m", "morrow.cli.main", "verify", str(path)],
         capture_output=True,
         text=True,
         cwd=ROOT,
     )
-    return (result.stdout + result.stderr).strip().splitlines()[0]
+    lines = (result.stdout + result.stderr).strip().splitlines()
+    return (lines[0] if lines else "(no output)"), result.returncode
 
 
 def main() -> None:
@@ -45,8 +46,13 @@ def main() -> None:
         working = Path(scratch) / CASSETTE.name
         shutil.copytree(CASSETTE, working)
 
-        print(f"$ morrow verify cassettes/{CASSETTE.name}")
-        print(f"  {_verify(working)}\n")
+        print(
+            f"# working on a copy of cassettes/{CASSETTE.name}"
+            " — the published one is untouched\n"
+        )
+        print("$ morrow verify <copy>")
+        before, before_code = _verify(working)
+        print(f"  {before}\n")
 
         churn_path = working / TARGET
         manifest_path = working / "manifest.json"
@@ -66,8 +72,18 @@ def main() -> None:
         )
 
         print(f"# edited {TARGET}: added_lines {was} -> {was // 2}, digest updated to match")
-        print(f"$ morrow verify cassettes/{CASSETTE.name}")
-        print(f"  {_verify(working)}")
+        print("$ morrow verify <copy>")
+        after, after_code = _verify(working)
+        print(f"  {after}")
+
+        # The narration says recomputation catches this. Assert it rather than asserting
+        # it in prose: a demo that prints its own conclusion regardless of the result is
+        # exactly the kind of unearned claim this project is about.
+        if "EVIDENCE_STALE" not in after or after_code != 2:
+            raise SystemExit(
+                f"tamper demo did not demonstrate anything: before={before_code} "
+                f"after={after_code} ({after})"
+            )
         print("\n# every digest matches. the report no longer follows from the evidence.")
 
 

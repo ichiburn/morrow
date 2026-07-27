@@ -47,9 +47,9 @@ a band of 1.2000 — so the rule fixed beforehand reported INVALID_EXPERIMENT ra
 widening the band. Both arm orderings are published so neither is hidden.
 
 The churn ratios came out 3.7538 / 5.1111 / 4.0000 against a largest null ratio of 2.2167.
-That is a descriptive observation, NOT a finding: the experiment was invalidated, its report
-deliberately carries no component ratios or aggregate, and nothing here establishes that the
-candidate caused the difference. Files-read came out mixed in direction (0.8947 / 0.8095 /
+That is a descriptive observation, NOT a finding: the experiment was invalidated, its report deliberately
+carries no component medians and no aggregate FFR (the per-pair ratios above are published),
+and nothing here establishes that the candidate caused the difference. Files-read came out mixed in direction (0.8947 / 0.8095 /
 1.4167) and is reported rather than dropped.
 
 Evidence for each experiment ships as a "cassette" committed to the repo. `morrow verify`
@@ -89,12 +89,17 @@ uv run morrow verify cassettes/treatment-replace-cache
 
 ## YouTube demo video (max 3 minutes)
 
-**TODO** — record from `docs/submission/video-script.md` (target 2:40) and paste the URL.
+**TODO** — record from `docs/submission/video-script.md` (2:57) and paste the URL.
 
 ## How did you use SigNoz?
 
 ```
-SigNoz is where the measurement becomes readable. An agent's trajectory *is* a trace, so
+SigNoz is where the measurement becomes investigable — deliberately NOT where it is decided.
+
+MORROW re-derives the verdict from the evidence and only then exports, because a gate that
+blocks a build must be deterministic and reproducible with no telemetry backend running.
+`morrow verify` reaches the same verdict offline. What SigNoz adds is the part a verdict
+cannot carry: the trajectory a human audits when they want to argue with the result. An agent's trajectory *is* a trace, so
 the mapping needed no invention:
 
   morrow.experiment      one registered task against one candidate
@@ -128,7 +133,7 @@ Three things I learned wiring it up:
 
 3. Not every event deserves a span. Across the three cassettes, 1,112 events carry no
    measurement signal against 441 that do. The quiet ones stay in the published evidence so
-   a reader can count them, but they never become spans. A trace that is five-sixths noise
+   a reader can count them, but they never become spans. A trace that is seventy per cent noise
    is not observability.
 
 One field is deliberately absent: replayed runs omit the measured wall-clock duration. Wall
@@ -160,6 +165,9 @@ the repository and found several overstatements, which were corrected.
 
 ChatGPT contributed product architecture, planning, and document preparation.
 
+The demo video's narration is synthetic speech (Microsoft edge-tts, en-US-AndrewNeural)
+generated from a script in the repository; no human voice was recorded.
+
 I reviewed and validated every generated change.
 ```
 
@@ -189,5 +197,5 @@ changed how much I trusted my own dashboard, and I would do that first next time
 | `casting.yaml` in the repo | Done — plus `casting.yaml.lock` |
 | Detailed blog on SigNoz usage | Draft ready (`blog-draft.md`); **needs publishing** |
 | Blog newly written for this hackathon | Yes — not reused from the pre-event challenge |
-| Demo video ≤ 3 minutes | Script ready (`video-script.md`, 2:40); **needs recording** |
+| Demo video ≤ 3 minutes | Built (`video-script.md`, 2:57) — `.video/out/morrow-demo.mp4`; **needs uploading** |
 | AI usage disclosed | In the README, the blog, the video narration, and the "AI disclosure" block above — all four naming Claude Code, Codex and ChatGPT with their distinct roles |

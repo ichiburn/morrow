@@ -9,7 +9,7 @@ uv run python scripts/build_video.py
 # → .video/out/morrow-demo.mp4
 ```
 
-Result: **2:40**, 1920×1080, under the 3:00 submission limit.
+Result: **2:57**, 1920×1080, under the 3:00 submission limit.
 
 ## Why it is generated rather than filmed
 
